@@ -110,15 +110,19 @@ class SnapshotDirectory(PathWrapper):
         # …
         return True
 
-    def get_snapshot(self, number):  # TODO: include predecessor?
+    def get_snapshot(self, number, with_predecessor=True):
         """
         """
         if not isinstance(number, int):
             raise self.error_class(
                 'Unable to get snapshot "{}". '
                 'Argument must be a number!'.format(number))
+        predecessor = None
+        if with_predecessor:
+            next_lowest_number = max({n for n in self.numbers if n < number})
+            predecessor = Snapshot(self.path / str(next_lowest_number))
         try:
-            return Snapshot(self.path / str(number))
+            return Snapshot(self.path / str(number), predecessor)
         except SnapshotDirectoryError:
             raise self.error_class(
                 'Cannot get snapshot number {}! No such snapshot in this '
@@ -145,6 +149,13 @@ def main():
     superfluous_snapshot_numbers = target.numbers - source.numbers
     print('Missing from target: {}'.format(missing_snapshot_numbers or 'nothing'))
     print('Superfluous at target: {}'.format(superfluous_snapshot_numbers or 'nothing'))
+    first_missing_snapshot = source.get_snapshot(min(missing_snapshot_numbers))
+    print(
+        'First missing snapshot is number {} (predecessor: {})'.format(
+            first_missing_snapshot.number,
+            first_missing_snapshot.predecessor.number
+        )
+    )
     umount_target_dir()
 
 
