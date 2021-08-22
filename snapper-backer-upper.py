@@ -126,6 +126,10 @@ class SnapshotDirectory(PathWrapper):
             )
 
     @property
+    def numbers(self):
+        return {snapshot.number for snapshot in self.snapshots}
+
+    @property
     def snapshots(self):
         predecessor = None
         for path in self.path.iterdir():
@@ -137,13 +141,10 @@ def main():
     mount_target_dir()
     source = SnapshotDirectory(SOURCE_BASE_DIR)
     target = SnapshotDirectory(TARGET_BASE_DIR)
-    for snapshot_directory in (source, target):
-        print('Snapshots at "{}":'.format(snapshot_directory.path))
-        for snapshot in snapshot_directory.snapshots:
-            predecessor = ''
-            if snapshot.predecessor:
-                predecessor = ' (predecessor: {})'.format(snapshot.predecessor.number)
-            print('* Snapshot {}{}'.format(snapshot.number, predecessor))
+    missing_snapshot_numbers = source.numbers - target.numbers
+    superfluous_snapshot_numbers = target.numbers - source.numbers
+    print('Missing from target: {}'.format(missing_snapshot_numbers or 'nothing'))
+    print('Superfluous at target: {}'.format(superfluous_snapshot_numbers or 'nothing'))
     umount_target_dir()
 
 
