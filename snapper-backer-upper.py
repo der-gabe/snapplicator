@@ -35,6 +35,10 @@ class PathWrapper:
         # TODO: Test readability
         self._path = path
 
+    @property
+    def path(self):
+        return self._path
+
 
 class SnapshotError(Exception):
     pass
@@ -67,7 +71,7 @@ class Snapshot(PathWrapper):
     def number(self):
         # TODO: This could probably be done better…
         # … more robustly, for one.
-        return int(self._path.parts[-1])
+        return int(self.path.stem)
 
     @property
     def predecessor(self):
@@ -106,9 +110,20 @@ class SnapshotDirectory(PathWrapper):
         # …
         return True
 
-    @property
-    def path(self):
-        return self._path
+    def get_snapshot(self, number):  # TODO: include predecessor?
+        """
+        """
+        if not isinstance(number, int):
+            raise self.error_class(
+                'Unable to get snapshot "{}". '
+                'Argument must be a number!'.format(number))
+        try:
+            return Snapshot(self.path / str(number))
+        except SnapshotDirectoryError:
+            raise self.error_class(
+                'Cannot get snapshot number {}! No such snapshot in this '
+                'snapshot directory "{}"?'.format(number, self.path)
+            )
 
     @property
     def snapshots(self):
