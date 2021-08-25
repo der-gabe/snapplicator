@@ -21,6 +21,10 @@ class PathWrapper:
     def __init__(self, path):
         """
         """
+        path = self._validate_path(path)
+        self._path = path
+
+    def _validate_path(self, path):
         if not isinstance(path, (Path, str)):
             raise self.error_class(
                 'Cannot create Path from `{}` type argument: '
@@ -33,11 +37,27 @@ class PathWrapper:
                 'Path "{}" is not a directory!'.format(path)
             )
         # TODO: Test readability
-        self._path = path
+        return path
 
     @property
     def path(self):
         return self._path
+
+
+class BtrfsStream(PathWrapper):
+
+    def __init__(self, path, parent_path=None):
+        super().__init__(path)
+        if parent_path:
+            parent_path = self._validate_path(parent_path)
+        self._parent_path = parent_path
+
+    @property
+    def command(self):
+        parent = ''
+        if self._parent_path:
+            parent = '-p {} '.format(self._parent_path)
+        return 'btrfs send {}{}'.format(parent, self.path)
 
 
 class SnapshotError(Exception):
@@ -76,6 +96,12 @@ class Snapshot(PathWrapper):
     @property
     def predecessor(self):
         return self._predecessor
+
+    def send(self):
+        parent_path = None
+        if self.predecessor:
+            parent_path = self.predecessor.path / 'snapshot'
+        return BtrfsStream(self.path / 'snapshot', parent_path)
 
 
 class SnapshotDirectoryError(Exception):
@@ -133,6 +159,20 @@ class SnapshotDirectory(PathWrapper):
     def numbers(self):
         return {snapshot.number for snapshot in self.snapshots}
 
+    def receive(self, btrfs_stream, number):
+        if not isinstance(btrfs_stream, BtrfsStream):
+            raise self.error_class('Supplied argument {} is not a BtrfsStream '
+                                   'object!'.format(btrfs_stream))
+        target_path = self.path / str(number)
+        # TODO: Ensure that the target directory exists
+        print('mkdir {}'.format(target_path))  # TODO: remove
+        # TODO: Run the actual send/receive commands
+        print('{} | btrfs receive {}'.format(btrfs_stream.command,  target_path))  # TODO: remove
+
+    def send_snapshot(self, number):
+        snapshot = self.get_snapshot(number)
+        return snapshot.send()
+
     @property
     def snapshots(self):
         predecessor = None
@@ -147,15 +187,19 @@ def main():
     target = SnapshotDirectory(TARGET_BASE_DIR)
     missing_snapshot_numbers = source.numbers - target.numbers
     superfluous_snapshot_numbers = target.numbers - source.numbers
-    print('Missing from target: {}'.format(missing_snapshot_numbers or 'nothing'))
-    print('Superfluous at target: {}'.format(superfluous_snapshot_numbers or 'nothing'))
-    first_missing_snapshot = source.get_snapshot(min(missing_snapshot_numbers))
-    print(
-        'First missing snapshot is number {} (predecessor: {})'.format(
-            first_missing_snapshot.number,
-            first_missing_snapshot.predecessor.number
-        )
-    )
+    # print('Missing from target: {}'.format(missing_snapshot_numbers or 'nothing'))
+    # print('Superfluous at target: {}'.format(superfluous_snapshot_numbers or 'nothing'))
+    # first_missing_snapshot = source.get_snapshot(min(missing_snapshot_numbers))
+    # print(
+    #     'First missing snapshot is number {} (predecessor: {})'.format(
+    #         first_missing_snapshot.number,
+    #         first_missing_snapshot.predecessor.number
+    #     )
+    # )
+    for missing_snapshot_number in missing_snapshot_numbers:
+        #missing_snapshot = source.get_snapshot(missing_snapshot_number)
+        btrfs_stream = source.send_snapshot(missing_snapshot_number)
+        target.receive(btrfs_stream, missing_snapshot_number)
     umount_target_dir()
 
 
