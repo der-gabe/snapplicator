@@ -1,5 +1,5 @@
 from pathlib import Path
-from subprocess import run
+from subprocess import PIPE, Popen, run
 
 
 SOURCE_BASE_DIR = Path('/.snapshots')
@@ -16,7 +16,13 @@ def umount_target_dir():
     run(('umount', '/mnt/'))
 
 
+class PathWrapperError(Exception):
+    pass
+
+
 class PathWrapper:
+
+    error_class = PathWrapperError
 
     def __init__(self, path):
         """
@@ -44,13 +50,22 @@ class PathWrapper:
         return self._path
 
 
+class BtrfsStreamError(Exception):
+    pass
+
+
 class BtrfsStream(PathWrapper):
 
-    def __init__(self, path, parent_path=None):
+    error_class = BtrfsStreamError
+
+    def __init__(self, path, parent_path=None, snapshot=None):
         super().__init__(path)
         if parent_path:
             parent_path = self._validate_path(parent_path)
         self._parent_path = parent_path
+        if snapshot and not isisintance(snapshot, Snapshot):
+            self.error_class('Snapshot argument "{}" is not a Snapshot object!'.format(snapshot))
+        self._snapshot = snapshot
 
     @property
     def command(self):
@@ -58,6 +73,14 @@ class BtrfsStream(PathWrapper):
         if self._parent_path:
             parent = '-p {} '.format(self._parent_path)
         return 'btrfs send {}{}'.format(parent, self.path)
+
+    def open(self):
+        btrfs_send_process = Popen(self.command.split(), stdout=PIPE)
+        return btrfs_send_process.communicate()[0]
+
+    @property
+    def snapshot(self):
+        return self._snapshot
 
 
 class SnapshotError(Exception):
@@ -164,10 +187,18 @@ class SnapshotDirectory(PathWrapper):
             raise self.error_class('Supplied argument {} is not a BtrfsStream '
                                    'object!'.format(btrfs_stream))
         target_path = self.path / str(number)
-        # TODO: Ensure that the target directory exists
-        print('mkdir {}'.format(target_path))  # TODO: remove
-        # TODO: Run the actual send/receive commands
-        print('{} | btrfs receive {}'.format(btrfs_stream.command,  target_path))  # TODO: remove
+        mode = 0o0750
+        if btrfs_stream.snapshot:
+            mode = btrfs_stream.snapshot.path.stat().st_mode
+        # Ensure that the target directory exists
+        target_path.mkdir(mode, exist_ok=True)
+        # Run the actual send/receive commands
+        # TODO: could be done better, e.g. more elegantly/robustly/pythonically
+        #btrfs_command = '{} | btrfs receive {}'.format(btrfs_stream.command,  target_path)
+        #print('* Running "{}"'.format(btrfs_command))
+        #run(btrfs_command.split())
+        btrfs_receive_process = Popen(('btrfs', 'receive', str(target_path)), stdin=PIPE)
+        btrfs_receive_process.communicate(input=btrfs_stream.open())
 
     def send_snapshot(self, number):
         snapshot = self.get_snapshot(number)
@@ -200,6 +231,8 @@ def main():
         #missing_snapshot = source.get_snapshot(missing_snapshot_number)
         btrfs_stream = source.send_snapshot(missing_snapshot_number)
         target.receive(btrfs_stream, missing_snapshot_number)
+    # TODO: transfer index XML files as well!
+    # TODO: remove superfluous snapshots!
     umount_target_dir()
 
 
