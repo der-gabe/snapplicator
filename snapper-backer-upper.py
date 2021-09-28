@@ -1,4 +1,5 @@
 from pathlib import Path
+from shutil import copy2
 from subprocess import PIPE, Popen, run
 
 
@@ -100,6 +101,7 @@ class Snapshot(PathWrapper):
                 'This does not look like a snapper snapshot! '
                 'Path: "{}"'.format(path)
             )
+        self._info = self.path / 'info.xml'
         if predecessor and not isinstance(predecessor, Snapshot):
             raise self.error_class(
                 'Supplied predecessor argument is not a Snapshot object!'
@@ -107,8 +109,13 @@ class Snapshot(PathWrapper):
         self._predecessor = predecessor
 
     def _is_snapper_snapshot(self):
-        # TODO: implement
-        return True
+        # TODO: check whether self.path.stem is a number
+        # TODO: check whether (self.path / 'snapshot') actually looks like a btrfs snapshot
+        return (self.path / 'snapshot').is_dir() and (self.path / 'info.xml').is_file()
+
+    @property
+    def info(self):
+        return self._info
 
     @property
     def number(self):
@@ -124,7 +131,7 @@ class Snapshot(PathWrapper):
         parent_path = None
         if self.predecessor:
             parent_path = self.predecessor.path / 'snapshot'
-        return BtrfsStream(self.path / 'snapshot', parent_path)
+        return self.info, BtrfsStream(self.path / 'snapshot', parent_path)
 
 
 class SnapshotDirectoryError(Exception):
@@ -182,9 +189,11 @@ class SnapshotDirectory(PathWrapper):
     def numbers(self):
         return {snapshot.number for snapshot in self.snapshots}
 
-    def receive(self, btrfs_stream, number):
+    def receive(self, info_path, btrfs_stream, number):
+        if not info_path.is_file():
+            raise self.error_class('Supplied info path "{}" is not a file!'.format(info_path))
         if not isinstance(btrfs_stream, BtrfsStream):
-            raise self.error_class('Supplied argument {} is not a BtrfsStream '
+            raise self.error_class('Supplied argument "{}" is not a BtrfsStream '
                                    'object!'.format(btrfs_stream))
         target_path = self.path / str(number)
         mode = 0o0750
@@ -192,13 +201,13 @@ class SnapshotDirectory(PathWrapper):
             mode = btrfs_stream.snapshot.path.stat().st_mode
         # Ensure that the target directory exists
         target_path.mkdir(mode, exist_ok=True)
+        # Copy the 'info.xml' file
+        copy2(str(info_path), str(target_path))
         # Run the actual send/receive commands
-        # TODO: could be done better, e.g. more elegantly/robustly/pythonically
-        #btrfs_command = '{} | btrfs receive {}'.format(btrfs_stream.command,  target_path)
-        #print('* Running "{}"'.format(btrfs_command))
-        #run(btrfs_command.split())
         btrfs_receive_process = Popen(('btrfs', 'receive', str(target_path)), stdin=PIPE)
         btrfs_receive_process.communicate(input=btrfs_stream.open())
+        # TODO: There should be some error handling to remove the info.xml and target
+        #       directory again, in case something goes wrong here.
 
     def send_snapshot(self, number):
         snapshot = self.get_snapshot(number)
@@ -218,20 +227,20 @@ def main():
     target = SnapshotDirectory(TARGET_BASE_DIR)
     missing_snapshot_numbers = source.numbers - target.numbers
     superfluous_snapshot_numbers = target.numbers - source.numbers
-    # print('Missing from target: {}'.format(missing_snapshot_numbers or 'nothing'))
-    # print('Superfluous at target: {}'.format(superfluous_snapshot_numbers or 'nothing'))
-    # first_missing_snapshot = source.get_snapshot(min(missing_snapshot_numbers))
-    # print(
-    #     'First missing snapshot is number {} (predecessor: {})'.format(
-    #         first_missing_snapshot.number,
-    #         first_missing_snapshot.predecessor.number
-    #     )
-    # )
-    for missing_snapshot_number in missing_snapshot_numbers:
+    print('Missing from target: {}'.format(missing_snapshot_numbers or 'nothing'))
+    print('Superfluous at target: {}'.format(superfluous_snapshot_numbers or 'nothing'))
+    if missing_snapshot_numbers:
+        first_missing_snapshot = source.get_snapshot(min(missing_snapshot_numbers))
+        print(
+            'First missing snapshot is number {} (predecessor: {})'.format(
+                first_missing_snapshot.number,
+                first_missing_snapshot.predecessor.number
+            )
+        )
+    for missing_snapshot_number in sorted(missing_snapshot_numbers):
         #missing_snapshot = source.get_snapshot(missing_snapshot_number)
-        btrfs_stream = source.send_snapshot(missing_snapshot_number)
-        target.receive(btrfs_stream, missing_snapshot_number)
-    # TODO: transfer index XML files as well!
+        info, btrfs_stream = source.send_snapshot(missing_snapshot_number)
+        target.receive(info, btrfs_stream, missing_snapshot_number)
     # TODO: remove superfluous snapshots!
     umount_target_dir()
 
