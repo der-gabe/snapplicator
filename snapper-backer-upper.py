@@ -1,6 +1,7 @@
 from pathlib import Path
-from shutil import copy2
+from shutil import copy2, rmtree
 from subprocess import PIPE, Popen, run
+from time import sleep
 
 
 SOURCE_BASE_DIR = Path('/.snapshots')
@@ -27,6 +28,7 @@ class PathWrapper:
 
     def __init__(self, path):
         """
+        Base class for classes that center around a path to an existing directory
         """
         path = self._validate_path(path)
         self._path = path
@@ -96,12 +98,13 @@ class Snapshot(PathWrapper):
         """
         """
         super().__init__(path)
+        self._info = self.path / 'info.xml'
+        self._snapshot = self.path / 'snapshot'
         if not self._is_snapper_snapshot():
             raise self.error_class(
                 'This does not look like a snapper snapshot! '
                 'Path: "{}"'.format(path)
             )
-        self._info = self.path / 'info.xml'
         if predecessor and not isinstance(predecessor, Snapshot):
             raise self.error_class(
                 'Supplied predecessor argument is not a Snapshot object!'
@@ -109,9 +112,24 @@ class Snapshot(PathWrapper):
         self._predecessor = predecessor
 
     def _is_snapper_snapshot(self):
-        # TODO: check whether self.path.stem is a number
-        # TODO: check whether (self.path / 'snapshot') actually looks like a btrfs snapshot
-        return (self.path / 'snapshot').is_dir() and (self.path / 'info.xml').is_file()
+        try:
+            int(self.path.stem)
+        except ValueError:
+            return False
+        # TODO: check whether 'self.snapshot' actually looks like a btrfs snapshot
+        return self.snapshot.is_dir() and self.info.is_file()
+
+    def delete(self):
+        """
+        Delete the entire snapshot
+        """
+        Popen(('btrfs', 'subvolume', 'delete', '-c', str(self.snapshot)))
+        self.info.unlink()
+        attempts = 8
+        while attempts and (self.info.exists() or self.snapshot.exists()):
+            attempts -= 1
+            sleep(0.25)
+        self.path.rmdir()
 
     @property
     def info(self):
@@ -119,8 +137,6 @@ class Snapshot(PathWrapper):
 
     @property
     def number(self):
-        # TODO: This could probably be done better…
-        # … more robustly, for one.
         return int(self.path.stem)
 
     @property
@@ -130,9 +146,12 @@ class Snapshot(PathWrapper):
     def send(self):
         parent_path = None
         if self.predecessor:
-            parent_path = self.predecessor.path / 'snapshot'
-        return self.info, BtrfsStream(self.path / 'snapshot', parent_path)
+            parent_path = self.predecessor.snapshot
+        return self.info, BtrfsStream(self.snapshot, parent_path)
 
+    @property
+    def snapshot(self):
+        return self._snapshot
 
 class SnapshotDirectoryError(Exception):
     pass
@@ -165,6 +184,9 @@ class SnapshotDirectory(PathWrapper):
         # |                +- …
         # …
         return True
+
+    def delete_snapshot(self, number):
+        self.get_snapshot(number).delete()
 
     def get_snapshot(self, number, with_predecessor=True):
         """
@@ -227,8 +249,8 @@ def main():
     target = SnapshotDirectory(TARGET_BASE_DIR)
     missing_snapshot_numbers = source.numbers - target.numbers
     superfluous_snapshot_numbers = target.numbers - source.numbers
-    print('Missing from target: {}'.format(missing_snapshot_numbers or 'nothing'))
-    print('Superfluous at target: {}'.format(superfluous_snapshot_numbers or 'nothing'))
+    print('Missing from target: {}'.format(sorted(missing_snapshot_numbers) or 'nothing'))
+    print('Superfluous at target: {}'.format(sorted(superfluous_snapshot_numbers) or 'nothing'))
     if missing_snapshot_numbers:
         first_missing_snapshot = source.get_snapshot(min(missing_snapshot_numbers))
         print(
@@ -238,10 +260,10 @@ def main():
             )
         )
     for missing_snapshot_number in sorted(missing_snapshot_numbers):
-        #missing_snapshot = source.get_snapshot(missing_snapshot_number)
         info, btrfs_stream = source.send_snapshot(missing_snapshot_number)
         target.receive(info, btrfs_stream, missing_snapshot_number)
-    # TODO: remove superfluous snapshots!
+    for superfluous_snapshot_number in sorted(superfluous_snapshot_numbers):
+        target.delete_snapshot(superfluous_snapshot_number)
     umount_target_dir()
 
 
