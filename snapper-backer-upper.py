@@ -1,6 +1,6 @@
 from pathlib import Path
 from shutil import copy2, rmtree
-from subprocess import PIPE, Popen, run
+from subprocess import DEVNULL, PIPE, Popen, run
 from time import sleep
 
 
@@ -116,15 +116,23 @@ class Snapshot(PathWrapper):
             int(self.path.stem)
         except ValueError:
             return False
-        # TODO: check whether 'self.snapshot' actually looks like a btrfs snapshot
-        return self.snapshot.is_dir() and self.info.is_file()
+        if not self.snapshot.is_dir():
+            return False
+        if Popen(('btrfs', 'subvolume', 'show', str(self.snapshot)), stdout=DEVNULL).wait():
+            return False
+        return self.info.is_file()
 
     def delete(self):
         """
         Delete the entire snapshot
         """
-        Popen(('btrfs', 'subvolume', 'delete', '-c', str(self.snapshot)))
-        self.info.unlink()
+        # TODO: Generate output for deletion, if verbose
+        if Popen(('btrfs', 'subvolume', 'delete', '-c', str(self.snapshot)), stdout=DEVNULL).wait():
+            self.error_class('Cannot delete btrfs subvolume "{}"!'.format(self.snapshot))
+        try:
+            self.info.unlink()
+        except FileNotFoundError:
+            pass
         attempts = 8
         while attempts and (self.info.exists() or self.snapshot.exists()):
             attempts -= 1
@@ -209,6 +217,7 @@ class SnapshotDirectory(PathWrapper):
 
     @property
     def numbers(self):
+        # TODO: This is backwards: we instantiate all the snapshots just to get their numbers!
         return {snapshot.number for snapshot in self.snapshots}
 
     def receive(self, info_path, btrfs_stream, number):
@@ -226,7 +235,8 @@ class SnapshotDirectory(PathWrapper):
         # Copy the 'info.xml' file
         copy2(str(info_path), str(target_path))
         # Run the actual send/receive commands
-        btrfs_receive_process = Popen(('btrfs', 'receive', str(target_path)), stdin=PIPE)
+        # TODO: Generate output, if verbose
+        btrfs_receive_process = Popen(('btrfs', 'receive', str(target_path)), stdin=PIPE, stdout=DEVNULL)
         btrfs_receive_process.communicate(input=btrfs_stream.open())
         # TODO: There should be some error handling to remove the info.xml and target
         #       directory again, in case something goes wrong here.
@@ -249,10 +259,12 @@ def main():
     target = SnapshotDirectory(TARGET_BASE_DIR)
     missing_snapshot_numbers = source.numbers - target.numbers
     superfluous_snapshot_numbers = target.numbers - source.numbers
+    # Make this output nicer and only output if verbose
     print('Missing from target: {}'.format(sorted(missing_snapshot_numbers) or 'nothing'))
     print('Superfluous at target: {}'.format(sorted(superfluous_snapshot_numbers) or 'nothing'))
     if missing_snapshot_numbers:
         first_missing_snapshot = source.get_snapshot(min(missing_snapshot_numbers))
+        # Only output if verbose
         print(
             'First missing snapshot is number {} (predecessor: {})'.format(
                 first_missing_snapshot.number,
