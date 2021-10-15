@@ -78,7 +78,7 @@ class BtrfsStream(PathWrapper):
         return 'btrfs send {}{}'.format(parent, self.path)
 
     def open(self):
-        btrfs_send_process = Popen(self.command.split(), stdout=PIPE)
+        btrfs_send_process = Popen(self.command.split(), stdout=PIPE, stderr=DEVNULL)
         return btrfs_send_process.communicate()[0]
 
     @property
@@ -183,20 +183,23 @@ class SnapshotDirectory(PathWrapper):
             )
 
     def _is_snapper_snapshot_directory(self):
-        # TODO: Do something with `self._path.glob(…)` and the idea that snapper
-        # snapshot directories conform to a well defined tree structure, like:
-        # +- 1 +- info.xml 
-        # |    +- snapshot +- …
-        # |                +- …
-        # +- 2 +- info.xml
-        # |    +- snapshot +- …
-        # |                +- …
-        # …
-        # +-[n]+- info.xml
-        # |    +- snapshot +- …
-        # |                +- …
-        # …
-        return True
+        # Validate that all subdirs are numbers
+        # Note that this ignores other files in the snaphsot directory!
+        try:
+            snapshot_numbers = self.numbers
+        except self.error_class:
+            return False
+        # Check that all the numbered subdirs have a 'snapshot' directory
+        # Note that we're not checking for the presence of "info.xml" at this point!
+        return all([(self.path / str(number) / 'snapshot').is_dir()
+                    for number in snapshot_numbers])
+
+    def _numbers(self):
+        for directory in [path for path in self.path.iterdir() if path.is_dir()]:
+            try:
+                yield int(directory.name)
+            except ValueError:
+                raise self.error_class('Supposed snapshot dir "{}" does not have an integer numerical name!'.format(directory))
 
     def delete_snapshot(self, number):
         self.get_snapshot(number).delete()
@@ -222,11 +225,7 @@ class SnapshotDirectory(PathWrapper):
 
     @property
     def numbers(self):
-        try:
-            return {int(path.name) for path in self.path.iterdir()}
-        except ValueError as error:
-            path_name = error.args[0].split()[-1].strip("'")
-            raise self.error_class('Supposed snapshot path "{}" does not end in a number!'.format(self.path / path_name))
+        return {n for n in self._numbers()}
 
     def receive(self, info_path, btrfs_stream, number):
         if not info_path.is_file():
