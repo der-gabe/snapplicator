@@ -96,6 +96,11 @@ class Snapshot(PathWrapper):
 
     def __init__(self, path, predecessor=None):
         """
+        Snapper snapshot wrapper class
+
+        Takes `path` argument as path to numbered snapshot directory
+        and optional `predecessor` argument for the snapshot preceding
+        this one in the collection.
         """
         super().__init__(path)
         self._info = self.path / 'info.xml'
@@ -217,8 +222,11 @@ class SnapshotDirectory(PathWrapper):
 
     @property
     def numbers(self):
-        # TODO: This is backwards: we instantiate all the snapshots just to get their numbers!
-        return {snapshot.number for snapshot in self.snapshots}
+        try:
+            return {int(path.name) for path in self.path.iterdir()}
+        except ValueError as error:
+            path_name = error.args[0].split()[-1].strip("'")
+            raise self.error_class('Supposed snapshot path "{}" does not end in a number!'.format(self.path / path_name))
 
     def receive(self, info_path, btrfs_stream, number):
         if not info_path.is_file():
@@ -236,7 +244,7 @@ class SnapshotDirectory(PathWrapper):
         copy2(str(info_path), str(target_path))
         # Run the actual send/receive commands
         # TODO: Generate output, if verbose
-        btrfs_receive_process = Popen(('btrfs', 'receive', str(target_path)), stdin=PIPE, stdout=DEVNULL)
+        btrfs_receive_process = Popen(('btrfs', 'receive', str(target_path)), stdin=PIPE, stdout=DEVNULL, stderr=DEVNULL)
         btrfs_receive_process.communicate(input=btrfs_stream.open())
         # TODO: There should be some error handling to remove the info.xml and target
         #       directory again, in case something goes wrong here.
