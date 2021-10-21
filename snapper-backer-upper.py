@@ -29,6 +29,9 @@ class PathWrapper:
     def __init__(self, path):
         """
         Base class for classes that center around a path to an existing directory
+
+        :param path: path to an existing directory
+        :type path: str or Path
         """
         path = self._validate_path(path)
         self._path = path
@@ -94,18 +97,22 @@ class Snapshot(PathWrapper):
 
     error_class = SnapshotError
 
-    def __init__(self, path, predecessor=None):
+    def __init__(self, path, incomplete=False, predecessor=None):
         """
         Snapper snapshot wrapper class
 
-        Takes `path` argument as path to numbered snapshot directory
-        and optional `predecessor` argument for the snapshot preceding
-        this one in the collection.
+        :param path: path to an existing, numbered snapshot directory
+        :type path: str or Path
+        :param incomplete: whether this snapshot may be incomplete, defaults to False
+        :type incomplete: bool
+        :param predecessor: the snapshot preceding this one in the collection.
+        :type predecessor: Snapshot
         """
         super().__init__(path)
+        self._incomplete = incomplete
         self._info = self.path / 'info.xml'
         self._snapshot = self.path / 'snapshot'
-        if not self._is_snapper_snapshot():
+        if not incomplete and not self._is_snapper_snapshot():
             raise self.error_class(
                 'This does not look like a snapper snapshot! '
                 'Path: "{}"'.format(path)
@@ -133,6 +140,7 @@ class Snapshot(PathWrapper):
         """
         # TODO: Generate output for deletion, if verbose
         if Popen(('btrfs', 'subvolume', 'delete', '-c', str(self.snapshot)), stdout=DEVNULL).wait():
+            # TODO: check if btrfs subvolume not absent already
             self.error_class('Cannot delete btrfs subvolume "{}"!'.format(self.snapshot))
         try:
             self.info.unlink()
@@ -155,6 +163,25 @@ class Snapshot(PathWrapper):
     @property
     def predecessor(self):
         return self._predecessor
+
+    def receive(self, info_path, btrfs_stream):
+        """
+        Receive Snapper snapshot
+        """
+        if not info_path.is_file():
+            raise self.error_class('Supplied info path "{}" is not a file!'.format(info_path))
+        if not isinstance(btrfs_stream, BtrfsStream):
+            raise self.error_class('Supplied argument "{}" is not a BtrfsStream '
+                                   'object!'.format(btrfs_stream))
+        # Copy the 'info.xml' file
+        # TODO: Generate output, if verbose
+        # TODO: Check if successful, raise error if not
+        copy2(str(info_path), str(self.path))
+        # Run the actual send/receive commands
+        # TODO: Generate output, if verbose
+        # TODO: Check if successful, raise error if not
+        btrfs_receive_process = Popen(('btrfs', 'receive', str(self.path)), stdin=PIPE, stdout=DEVNULL, stderr=DEVNULL)
+        btrfs_receive_process.communicate(input=btrfs_stream.open())
 
     def send(self):
         parent_path = None
@@ -184,13 +211,13 @@ class SnapshotDirectory(PathWrapper):
 
     def _is_snapper_snapshot_directory(self):
         # Validate that all subdirs are numbers
-        # Note that this ignores other files in the snaphsot directory!
+        # Note that this ignores other files in the snapshot directory!
         try:
             snapshot_numbers = self.numbers
         except self.error_class:
             return False
         # Check that all the numbered subdirs have a 'snapshot' directory
-        # Note that we're not checking for the presence of "info.xml" at this point!
+        # Note that we're not checking for the presence of 'info.xml' at this point!
         return all([(self.path / str(number) / 'snapshot').is_dir()
                     for number in snapshot_numbers])
 
@@ -216,7 +243,7 @@ class SnapshotDirectory(PathWrapper):
             next_lowest_number = max({n for n in self.numbers if n < number})
             predecessor = Snapshot(self.path / str(next_lowest_number))
         try:
-            return Snapshot(self.path / str(number), predecessor)
+            return Snapshot(self.path / str(number), predecessor=predecessor)
         except SnapshotDirectoryError:
             raise self.error_class(
                 'Cannot get snapshot number {}! No such snapshot in this '
@@ -227,26 +254,21 @@ class SnapshotDirectory(PathWrapper):
     def numbers(self):
         return {n for n in self._numbers()}
 
-    def receive(self, info_path, btrfs_stream, number):
-        if not info_path.is_file():
-            raise self.error_class('Supplied info path "{}" is not a file!'.format(info_path))
-        if not isinstance(btrfs_stream, BtrfsStream):
-            raise self.error_class('Supplied argument "{}" is not a BtrfsStream '
-                                   'object!'.format(btrfs_stream))
+    def receive_snapshot(self, info_path, btrfs_stream, number):
         target_path = self.path / str(number)
         mode = 0o0750
         if btrfs_stream.snapshot:
             mode = btrfs_stream.snapshot.path.stat().st_mode
         # Ensure that the target directory exists
         target_path.mkdir(mode, exist_ok=True)
-        # Copy the 'info.xml' file
-        copy2(str(info_path), str(target_path))
-        # Run the actual send/receive commands
-        # TODO: Generate output, if verbose
-        btrfs_receive_process = Popen(('btrfs', 'receive', str(target_path)), stdin=PIPE, stdout=DEVNULL, stderr=DEVNULL)
-        btrfs_receive_process.communicate(input=btrfs_stream.open())
-        # TODO: There should be some error handling to remove the info.xml and target
-        #       directory again, in case something goes wrong here.
+        # Initialise the target snapshot in incomplete state
+        snapshot = Snapshot(target_path, incomplete=True)
+        # Delegate actual reception to it
+        try:
+            snapshot.receive(info_path, btrfs_stream)
+        except SnapshotError:
+            snapshot.delete()
+            raise
 
     def send_snapshot(self, number):
         snapshot = self.get_snapshot(number)
@@ -256,7 +278,7 @@ class SnapshotDirectory(PathWrapper):
     def snapshots(self):
         predecessor = None
         for path in self.path.iterdir():
-            snapshot = Snapshot(path, predecessor)
+            snapshot = Snapshot(path, predecessor=predecessor)
             yield snapshot
             predecessor = snapshot
 
@@ -280,7 +302,7 @@ def main():
         )
     for missing_snapshot_number in sorted(missing_snapshot_numbers):
         info, btrfs_stream = source.send_snapshot(missing_snapshot_number)
-        target.receive(info, btrfs_stream, missing_snapshot_number)
+        target.receive_snapshot(info, btrfs_stream, missing_snapshot_number)
     for superfluous_snapshot_number in sorted(superfluous_snapshot_numbers):
         target.delete_snapshot(superfluous_snapshot_number)
     umount_target_dir()
