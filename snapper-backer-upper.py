@@ -142,14 +142,17 @@ class Snapshot(PathWrapper):
         """
         Delete the entire snapshot
         """
-        # TODO: Generate output for deletion, if verbose
-        if Popen(('btrfs', 'subvolume', 'delete', '-c', str(self.snapshot)), stdout=DEVNULL).wait():
-            # TODO: check if btrfs subvolume not absent already
-            self.error('Cannot delete btrfs subvolume "{}"!'.format(self.snapshot))
+        if self.snapshot.exists():
+            # TODO: Generate output for deletion, if verbose
+            btrfs_process = Popen(('btrfs', 'subvolume', 'delete', '-c', str(self.snapshot)),
+                                  stdout=DEVNULL)
+            if btrfs_process.wait() != 0:
+                self.error('Cannot delete btrfs subvolume "{}"!'.format(self.snapshot))
         try:
             self.info.unlink()
         except FileNotFoundError:
             pass
+        # Sometimes it takes a little while for the files/dirs to actually disappear.
         attempts = 8
         while attempts and (self.info.exists() or self.snapshot.exists()):
             attempts -= 1
