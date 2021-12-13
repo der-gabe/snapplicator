@@ -38,22 +38,26 @@ class PathWrapper:
 
     def _validate_path(self, path):
         if not isinstance(path, (Path, str)):
-            raise self.error_class(
+            self.error(
                 'Cannot create Path from `{}` type argument: '
                 '"{}"'.format(type(path), path)
             )
         if not isinstance(path, Path):
             path = Path(path)
         if not path.is_dir():
-            raise self.error_class(
-                'Path "{}" is not a directory!'.format(path)
-            )
+            self.error('Path "{}" is not a directory!'.format(path))
         # TODO: Test readability
         return path
 
     @property
     def path(self):
         return self._path
+
+    def error(self, message):
+        """
+        Raise an exception of the type stored in `self.error_class`
+        """
+        raise self.error_class(message)
 
 
 class BtrfsStreamError(Exception):
@@ -70,7 +74,7 @@ class BtrfsStream(PathWrapper):
             parent_path = self._validate_path(parent_path)
         self._parent_path = parent_path
         if snapshot and not isisintance(snapshot, Snapshot):
-            self.error_class('Snapshot argument "{}" is not a Snapshot object!'.format(snapshot))
+            self.error('Snapshot argument "{}" is not a Snapshot object!'.format(snapshot))
         self._snapshot = snapshot
 
     @property
@@ -113,12 +117,12 @@ class Snapshot(PathWrapper):
         self._info = self.path / 'info.xml'
         self._snapshot = self.path / 'snapshot'
         if not incomplete and not self._is_snapper_snapshot():
-            raise self.error_class(
+            self.error(
                 'This does not look like a snapper snapshot! '
                 'Path: "{}"'.format(path)
             )
         if predecessor and not isinstance(predecessor, Snapshot):
-            raise self.error_class(
+            self.error(
                 'Supplied predecessor argument is not a Snapshot object!'
             )
         self._predecessor = predecessor
@@ -141,7 +145,7 @@ class Snapshot(PathWrapper):
         # TODO: Generate output for deletion, if verbose
         if Popen(('btrfs', 'subvolume', 'delete', '-c', str(self.snapshot)), stdout=DEVNULL).wait():
             # TODO: check if btrfs subvolume not absent already
-            self.error_class('Cannot delete btrfs subvolume "{}"!'.format(self.snapshot))
+            self.error('Cannot delete btrfs subvolume "{}"!'.format(self.snapshot))
         try:
             self.info.unlink()
         except FileNotFoundError:
@@ -169,9 +173,9 @@ class Snapshot(PathWrapper):
         Receive Snapper snapshot
         """
         if not info_path.is_file():
-            raise self.error_class('Supplied info path "{}" is not a file!'.format(info_path))
+            self.error('Supplied info path "{}" is not a file!'.format(info_path))
         if not isinstance(btrfs_stream, BtrfsStream):
-            raise self.error_class('Supplied argument "{}" is not a BtrfsStream '
+            self.error('Supplied argument "{}" is not a BtrfsStream '
                                    'object!'.format(btrfs_stream))
         # Copy the 'info.xml' file
         # TODO: Generate output, if verbose
@@ -204,7 +208,7 @@ class SnapshotDirectory(PathWrapper):
     def __init__(self, path):
         super().__init__(path)
         if not self._is_snapper_snapshot_directory():
-            raise self.error_class(
+            self.error(
                 'This does not look like a snapper snapshot directory! '
                 'Path: "{}"'.format(path)
             )
@@ -226,7 +230,7 @@ class SnapshotDirectory(PathWrapper):
             try:
                 yield int(directory.name)
             except ValueError:
-                raise self.error_class('Supposed snapshot dir "{}" does not have an integer numerical name!'.format(directory))
+                self.error('Supposed snapshot dir "{}" does not have an integer numerical name!'.format(directory))
 
     def delete_snapshot(self, number):
         self.get_snapshot(number).delete()
@@ -235,9 +239,10 @@ class SnapshotDirectory(PathWrapper):
         """
         """
         if not isinstance(number, int):
-            raise self.error_class(
+            self.error(
                 'Unable to get snapshot "{}". '
-                'Argument must be a number!'.format(number))
+                'Argument must be a number!'.format(number)
+            )
         predecessor = None
         if with_predecessor:
             next_lowest_number = max({n for n in self.numbers if n < number})
@@ -245,7 +250,7 @@ class SnapshotDirectory(PathWrapper):
         try:
             return Snapshot(self.path / str(number), predecessor=predecessor)
         except SnapshotDirectoryError:
-            raise self.error_class(
+            self.error(
                 'Cannot get snapshot number {}! No such snapshot in this '
                 'snapshot directory "{}"?'.format(number, self.path)
             )
