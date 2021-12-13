@@ -1,3 +1,4 @@
+from argparse import ArgumentParser
 from pathlib import Path
 from shutil import copy2, rmtree
 from subprocess import DEVNULL, PIPE, Popen, run
@@ -6,6 +7,7 @@ from time import sleep
 
 SOURCE_BASE_DIR = Path('/.snapshots')
 TARGET_BASE_DIR = Path('/mnt/backups/qubes4/root/.snapshots')
+VERBOSE = False
 
 
 def mount_target_dir():
@@ -16,6 +18,25 @@ def mount_target_dir():
 def umount_target_dir():
     # This should really be done differently
     run(('umount', '/mnt/'))
+
+
+def get_arguments():
+    parser = ArgumentParser()
+    parser.add_argument('-v', '--verbose',
+                        action='store_true',
+                        help='explain what is being done')
+    return parser.parse_args()
+
+
+def output(message):
+    if VERBOSE:
+        print(message)
+
+
+def process_arguments():
+    arguments = get_arguments()
+    global VERBOSE
+    VERBOSE = arguments.verbose
 
 
 class PathWrapperError(Exception):
@@ -291,18 +312,19 @@ class SnapshotDirectory(PathWrapper):
             predecessor = snapshot
 
 def main():
+    process_arguments()
     mount_target_dir()
     source = SnapshotDirectory(SOURCE_BASE_DIR)
     target = SnapshotDirectory(TARGET_BASE_DIR)
     missing_snapshot_numbers = source.numbers - target.numbers
     superfluous_snapshot_numbers = target.numbers - source.numbers
     # Make this output nicer and only output if verbose
-    print('Missing from target: {}'.format(sorted(missing_snapshot_numbers) or 'nothing'))
-    print('Superfluous at target: {}'.format(sorted(superfluous_snapshot_numbers) or 'nothing'))
+    output('Missing from target: {}'.format(sorted(missing_snapshot_numbers) or 'nothing'))
+    output('Superfluous at target: {}'.format(sorted(superfluous_snapshot_numbers) or 'nothing'))
     if missing_snapshot_numbers:
         first_missing_snapshot = source.get_snapshot(min(missing_snapshot_numbers))
         # Only output if verbose
-        print(
+        output(
             'First missing snapshot is number {} (predecessor: {})'.format(
                 first_missing_snapshot.number,
                 first_missing_snapshot.predecessor.number
