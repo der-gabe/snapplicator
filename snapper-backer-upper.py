@@ -155,7 +155,7 @@ class Snapshot(PathWrapper):
             return False
         if not self.snapshot.is_dir():
             return False
-        if Popen(('btrfs', 'subvolume', 'show', str(self.snapshot)), stdout=DEVNULL).wait():
+        if Popen(('btrfs', 'subvolume', 'show', str(self.snapshot)), stdout=DEVNULL).wait() != 0:
             return False
         return self.info.is_file()
 
