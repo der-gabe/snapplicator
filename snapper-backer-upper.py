@@ -3,21 +3,12 @@ from pathlib import Path
 from shutil import copy2, rmtree
 from subprocess import DEVNULL, PIPE, Popen, run
 from time import sleep
+import os
 
 
 SOURCE_BASE_DIR = Path('/.snapshots')
 TARGET_BASE_DIR = Path('/mnt/backups/qubes4/root/.snapshots')
 VERBOSE = False
-
-
-def mount_target_dir():
-    # This should really be done differently
-    run(('mount', '/dev/mapper/sda1_crypt', '/mnt/'))
-
-
-def umount_target_dir():
-    # This should really be done differently
-    run(('umount', '/mnt/'))
 
 
 def get_arguments():
@@ -67,7 +58,8 @@ class PathWrapper:
             path = Path(path)
         if not path.is_dir():
             self.error('Path "{}" is not a directory!'.format(path))
-        # TODO: Test readability
+        if not os.access(str(path), os.R_OK):
+            self.error('Path "{}" is not readable!'.format(path))
         return path
 
     @property
@@ -221,6 +213,7 @@ class Snapshot(PathWrapper):
     def snapshot(self):
         return self._snapshot
 
+
 class SnapshotDirectoryError(Exception):
     pass
 
@@ -311,19 +304,42 @@ class SnapshotDirectory(PathWrapper):
             yield snapshot
             predecessor = snapshot
 
+
+class ScriptDirectoryError(Exception):
+    pass
+
+
+class ScriptDirectory(PathWrapper):
+
+    error_class = ScriptDirectoryError
+
+    @property
+    def scripts(self):
+        for path in self.path.iterdir():
+            if path.is_file() and os.access(str(path), os.R_OK|os.X_OK):
+                yield path
+
+
+def run_scripts_in(path):
+    try:
+        script_directory = ScriptDirectory(path)
+    except PathWrapperError:
+        # No script dir or script dir not readable? No big deal!
+        return
+    for script in script_directory.scripts:
+        output('Running script "{}"…'.format(script))
+        run(str(script))
+
+
 def main():
-    process_arguments()
-    mount_target_dir()
     source = SnapshotDirectory(SOURCE_BASE_DIR)
     target = SnapshotDirectory(TARGET_BASE_DIR)
     missing_snapshot_numbers = source.numbers - target.numbers
     superfluous_snapshot_numbers = target.numbers - source.numbers
-    # Make this output nicer and only output if verbose
     output('Missing from target: {}'.format(sorted(missing_snapshot_numbers) or 'nothing'))
     output('Superfluous at target: {}'.format(sorted(superfluous_snapshot_numbers) or 'nothing'))
     if missing_snapshot_numbers:
         first_missing_snapshot = source.get_snapshot(min(missing_snapshot_numbers))
-        # Only output if verbose
         output(
             'First missing snapshot is number {} (predecessor: {})'.format(
                 first_missing_snapshot.number,
@@ -335,8 +351,10 @@ def main():
         target.receive_snapshot(info, btrfs_stream, missing_snapshot_number)
     for superfluous_snapshot_number in sorted(superfluous_snapshot_numbers):
         target.delete_snapshot(superfluous_snapshot_number)
-    umount_target_dir()
 
 
 if __name__ == '__main__':
+    process_arguments()
+    run_scripts_in('/etc/snapplicator/prerun-hooks.d')
     main()
+    run_scripts_in('/etc/snapplicator/postrun-hooks.d')
