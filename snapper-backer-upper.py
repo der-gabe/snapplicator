@@ -1,13 +1,13 @@
 from argparse import ArgumentParser
+from collections import namedtuple
 from pathlib import Path
 from shutil import copy2, rmtree
 from subprocess import DEVNULL, PIPE, Popen, run
 from time import sleep
 import os
+import yaml
 
 
-SOURCE_BASE_DIR = Path('/.snapshots')
-TARGET_BASE_DIR = Path('/mnt/backups/qubes4/root/.snapshots')
 VERBOSE = False
 
 
@@ -17,6 +17,44 @@ def get_arguments():
                         action='store_true',
                         help='explain what is being done')
     return parser.parse_args()
+
+
+DuplicationPair = namedtuple('DuplicationPair', 'source target')
+
+
+class ConfigError(Exception):
+    pass
+
+
+def get_duplication_pairs():
+    # TODO: Make config file path configurable
+    config_file_path = '/etc/snapplicator/config.yml'
+    try:
+        with open(config_file_path) as config_file:
+            config = yaml.load(config_file.read())
+    except FileNotFoundError:
+        raise ConfigError('Could not find config file at "{}"'.format(config_file_path))
+    meta = config.get('config')
+    if meta and 'version' in meta:
+        version = meta['version']
+        if version != 1:
+            raise ConfigError('Unsupported config version: {}'.format(version))
+    duplications = config.get('duplication_pairs')
+    if not duplications:
+        raise ConfigError('No/empty `duplication_pairs` list in config!')
+    duplication_pairs = []
+    for duplication in duplications:
+        for key in ('source', 'target'):
+            if key not in duplication or not duplication[key]:
+                raise ConfigError('No/empty `{}` in duplication pair: '
+                                  '"{}"'.format(key, duplication))
+            duplication[key] = duplication[key] if duplication[key] == '/'\
+                               else duplication[key].rstrip('/')
+            if not duplication[key].endswith('.snapshots'):
+                duplication[key] += '/.snapshots'
+        duplication_pairs.append(DuplicationPair(duplication['source'],
+                                                 duplication['target']))
+    return duplication_pairs
 
 
 def output(message):
@@ -331,9 +369,9 @@ def run_scripts_in(path):
         run(str(script))
 
 
-def main():
-    source = SnapshotDirectory(SOURCE_BASE_DIR)
-    target = SnapshotDirectory(TARGET_BASE_DIR)
+def duplicate(source_dir, target_dir):
+    source = SnapshotDirectory(source_dir)
+    target = SnapshotDirectory(target_dir)
     missing_snapshot_numbers = source.numbers - target.numbers
     superfluous_snapshot_numbers = target.numbers - source.numbers
     output('Missing from target: {}'.format(sorted(missing_snapshot_numbers) or 'nothing'))
@@ -355,6 +393,9 @@ def main():
 
 if __name__ == '__main__':
     process_arguments()
+    # TODO: Make scripts dir configurable
     run_scripts_in('/etc/snapplicator/prerun-hooks.d')
-    main()
+    for duplication_pair in get_duplication_pairs():
+        duplicate(duplication_pair.source, duplication_pair.target)
+    # TODO: Make scripts dir configurable
     run_scripts_in('/etc/snapplicator/postrun-hooks.d')
