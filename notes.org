@@ -1,0 +1,69 @@
+* TODO Implement automatic sync of `snapper` snapshots
+… including snaphot deletions
+** DONE Preliminary investigation
+[gabe@dom0 ~]$ sudo mount /dev/mapper/sda1_crypt /mnt/
+[gabe@dom0 ~]$ sudo mkdir /mnt/backups
+[gabe@dom0 ~]$ sudo mkdir /mnt/backups/qubes4
+[gabe@dom0 ~]$ sudo mkdir -p /mnt/backups/qubes4/root/.snapshots
+
+… (switch to 'root')
+
+[root@dom0 ~]# btrfs send /.snapshots/2 | btrfs receive /mnt/backups/qubes4/root/.snapshots/
+ERROR: failed to get flags for subvolume /.snapshots/2: Invalid argument
+
+… (uh doi, the actual snapshot is another directory "down" under '…/snapshot')
+
+[root@dom0 ~]# btrfs send -v /.snapshots/2/snapshot | btrfs receive /mnt/backups/qubes4/root/.snapshots/
+At subvol /.snapshots/2/snapshot
+At subvol snapshot
+BTRFS_IOC_SEND returned 0
+joining genl thread
+
+(This worked. Nice! But it created a subvolume under '/mnt/backups/qubes4/root/.snapshots/snapshot', which is not where I want it.)
+
+[root@dom0 ~]# mkdir /mnt/backups/qubes4/root/.snapshots/2
+[root@dom0 ~]# btrfs send -v /.snapshots/2/snapshot | btrfs receive /mnt/backups/qubes4/root/.snapshots/2/
+At subvol /.snapshots/2/snapshot
+At subvol snapshot
+BTRFS_IOC_SEND returned 0
+joining genl thread
+
+(OK, this seems to have worked fine (again). Now for the next snapshot in the row, this time trying for an incremental send/receive.)
+
+[root@dom0 ~]# mkdir /mnt/backups/qubes4/root/.snapshots/96/
+[root@dom0 ~]# btrfs send -p /.snapshots/2/snapshot -v /.snapshots/96/snapshot | btrfs receive /mnt/backups/qubes4/root/.snapshots/96/
+At subvol /.snapshots/96/snapshot
+At snapshot snapshot
+BTRFS_IOC_SEND returned 0
+joining genl thread
+
+(This went great and finished very fast! Now for one more…)
+
+[root@dom0 ~]# mkdir /mnt/backups/qubes4/root/.snapshots/108
+[root@dom0 ~]# btrfs send -p /.snapshots/96/snapshot /.snapshots/108/snapshot | btrfs receive /mnt/backups/qubes4/root/.snapshots/108/
+At subvol /.snapshots/108/snapshot
+At snapshot snapshot
+
+(I felt that I didn't need the verbose flag in that example.)
+** TODO (optional) Experiment some more
+What happens when the parent is deleted? … on either side?
+** TODO Write basic snapshot replication script
+*** Requirements
+**** Must find new snapshots, auto-determine the parent (numeric predecessor), set up target directory and send/receive it correctly
+If no predecessor, transfer as full, rather than incremental.
+**** Must also find deleted snapshots on source side and also delete them on target side
+**** Should also copy over `snapper`'s XML files…
+*** DONE Transfer missing btrfs snapshots
+*** DONE Transfer info.xml files
+*** DONE Delete superfluous snapshots
+*** DONE Improve error handling for deletion
+*** DONE Obviate need to instantiate all snapshots in a snapshot dir only to get the available numbers
+*** DONE Actually validate snapshot directory a bit
+*** DONE Make output configurable with -v/--verbose flag
+*** DONE Improve mounting/unmounting
+pre-run/post-run hooks directory, as with `dehydrated`
+*** DONE Make snapshot locations configurable somehow
+*** TODO Implement systemd service to run script
+*** …
+*** TODO Put on GitHub/Gitlab
+*** TODO Publish package on OBS
