@@ -141,7 +141,9 @@ class BtrfsStream(PathWrapper):
     def __init__(self, path, parent_path=None, snapshot=None):
         super().__init__(path)
         if parent_path:
-            parent_path = self._validate_path(parent_path)
+            parent_path = Path(parent_path)
+            self._validate_path_exists(parent_path)
+            self._validate_path_is_readable_dir(parent_path)
         self._parent_path = parent_path
         if snapshot and not isisintance(snapshot, Snapshot):
             self.error('Snapshot argument "{}" is not a Snapshot object!'.format(snapshot))
