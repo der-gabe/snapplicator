@@ -343,7 +343,7 @@ class SnapshotDirectory(PathWrapper):
             predecessor = snapshot
 
 
-class ScriptDirectoryError(Exception):
+class ScriptDirectoryError(PathWrapperError):
     pass
 
 
