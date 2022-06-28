@@ -72,33 +72,52 @@ class PathWrapperError(Exception):
     pass
 
 
+class PathWrapperExistenceError(PathWrapperError):
+    pass
+
+
 class PathWrapper:
 
     error_class = PathWrapperError
 
-    def __init__(self, path):
+    def __init__(self, path, create_if_missing=False):
         """
         Base class for classes that center around a path to an existing directory
 
         :param path: path to an existing directory
         :type path: str or Path
         """
-        path = self._validate_path(path)
+        self._validate_path_argument(path)
+
+        if not isinstance(path, Path):
+            path = Path(path)
+
+        try:
+            self._validate_path_exists(path)
+        except self.error_class:
+            if not create_if_missing:
+                raise
+            path.mkdir(0o0750, exist_ok=True)
+
+        self._validate_path_is_readable_dir(path)
         self._path = path
 
-    def _validate_path(self, path):
+    def _validate_path_argument(self, path):
         if not isinstance(path, (Path, str)):
             self.error(
                 'Cannot create Path from `{}` type argument: '
                 '"{}"'.format(type(path), path)
             )
-        if not isinstance(path, Path):
-            path = Path(path)
+
+    def _validate_path_exists(self, path):
+        if not path.exists():
+            raise PathWrapperExistenceError('Path "{}" does not exist!'.format(path))
+
+    def _validate_path_is_readable_dir(self, path):
         if not path.is_dir():
             self.error('Path "{}" is not a directory!'.format(path))
         if not os.access(str(path), os.R_OK):
             self.error('Path "{}" is not readable!'.format(path))
-        return path
 
     @property
     def path(self):
@@ -260,8 +279,17 @@ class SnapshotDirectory(PathWrapper):
 
     error_class = SnapshotDirectoryError
 
-    def __init__(self, path):
-        super().__init__(path)
+    def __init__(self, path, create_if_missing=False):
+        try:
+            super().__init__(path)
+        except PathWrapperExistenceError:
+            if not create_if_missing:
+                raise
+            if Popen(('btrfs', 'subvolume', 'create', str(path)), stdout=DEVNULL).wait() != 0:
+                self.error('Unable to create btrfs snapshot '
+                           'for snapshot directory at path "{}"!'.format(path))
+            self._validate_path_is_readable_dir(path)
+            self._path = path
         if not self._is_snapper_snapshot_directory():
             self.error(
                 'This does not look like a snapper snapshot directory! '
@@ -371,7 +399,7 @@ def run_scripts_in(path):
 
 def duplicate(source_dir, target_dir):
     source = SnapshotDirectory(source_dir)
-    target = SnapshotDirectory(target_dir)
+    target = SnapshotDirectory(target_dir, create_if_missing=True)
     missing_snapshot_numbers = source.numbers - target.numbers
     superfluous_snapshot_numbers = target.numbers - source.numbers
     output('Missing from target: {}'.format(sorted(missing_snapshot_numbers) or 'nothing'))
