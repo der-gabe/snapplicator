@@ -31,7 +31,7 @@ def get_duplication_pairs():
     config_file_path = '/etc/snapplicator/config.yml'
     try:
         with open(config_file_path) as config_file:
-            config = yaml.load(config_file.read())
+            config = yaml.safe_load(config_file.read())
     except FileNotFoundError:
         raise ConfigError('Could not find config file at "{}"'.format(config_file_path))
     meta = config.get('config')
