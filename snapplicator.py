@@ -326,10 +326,10 @@ class SnapshotDirectory(PathWrapper):
                 'Unable to get snapshot "{}". '
                 'Argument must be a number!'.format(number)
             )
+        lower_snapshot_numbers = {n for n in self.numbers if n < number}
         predecessor = None
-        if with_predecessor:
-            next_lowest_number = max({n for n in self.numbers if n < number})
-            predecessor = Snapshot(self.path / str(next_lowest_number))
+        if with_predecessor and lower_snapshot_numbers:
+            predecessor = Snapshot(self.path / str(max(lower_snapshot_numbers)))
         try:
             return Snapshot(self.path / str(number), predecessor=predecessor)
         except SnapshotDirectoryError:
@@ -406,12 +406,10 @@ def duplicate(source_dir, target_dir):
     output('Superfluous at target: {}'.format(sorted(superfluous_snapshot_numbers) or 'nothing'))
     if missing_snapshot_numbers:
         first_missing_snapshot = source.get_snapshot(min(missing_snapshot_numbers))
-        output(
-            'First missing snapshot is number {} (predecessor: {})'.format(
-                first_missing_snapshot.number,
-                first_missing_snapshot.predecessor.number
-            )
-        )
+        out_text = 'First missing snapshot is number {}'.format(first_missing_snapshot.number)
+        if first_missing_snapshot.predecessor:
+            out_text += ' (predecessor: {})'.format(first_missing_snapshot.predecessor.number)
+        output(out_text)
     for missing_snapshot_number in sorted(missing_snapshot_numbers):
         info, btrfs_stream = source.send_snapshot(missing_snapshot_number)
         target.receive_snapshot(info, btrfs_stream, missing_snapshot_number)
