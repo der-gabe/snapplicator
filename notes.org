@@ -63,6 +63,600 @@ If no predecessor, transfer as full, rather than incremental.
 *** DONE Improve mounting/unmounting
 pre-run/post-run hooks directory, as with `dehydrated`
 *** DONE Make snapshot locations configurable somehow
+*** chroot testing (abandoned)
+> snapper --version
+snapper 0.10.2
+flags btrfs,lvm,no-ext4,xattrs,rollback,btrfs-quota,no-selinux
+
+> mktemp -d /tmp/snapplicator-test.XXXXXXXXXXXX
+/tmp/snapplicator-test.FFypCHtBoFbG
+
+> cd /tmp/snapplicator-test.FFypCHtBoFbG
+> ls -Al
+total 0
+
+> chroot /tmp/snapplicator-test.FFypCHtBoFbG
+chroot: cannot change root directory to '/tmp/snapplicator-test.FFypCHtBoFbG': Operation not permitted
+
+   Doesn't work, removed it again.
+
+> mktemp -d ~/temp/snapplicator-test.XXXXXXXXXXXX
+/home/gabe/temp/snapplicator-test.pWwFum0UqUB8
+
+> chroot /home/gabe/temp/snapplicator-test.pWwFum0UqUB8
+chroot: cannot change root directory to '/home/gabe/temp/snapplicator-test.pWwFum0UqUB8': Operation not permitted
+
+   Still doesn't work, removed it again.
+
+   I think the problem is that there's no shell in the chroot. (duh!)
+
+   I should try running snapper directly, but hardlink it first…
+
+> which snapper
+/usr/bin/snapper
+
+> mktemp -d /tmp/snapplicator-test.XXXXXXXXXXXX
+/tmp/snapplicator-test.AlV0146Y0xCZ
+
+> ln /usr/bin/snapper /tmp/snapplicator-test.AlV0146Y0xCZ/usr/bin/
+ln: failed to create hard link '/tmp/snapplicator-test.AlV0146Y0xCZ/usr/bin/snapper' => '/usr/bin/snapper': Invalid cross-device link
+
+  OK, so that didn't work, because /tmp/ is on a different FS, actually.
+
+  Once again, now as root:
+
+# mkdir /root/tmp
+# mktemp -d /root/tmp/snapplicator-test.XXXXXXXXXXXX
+/root/tmp/snapplicator-test.FHHhGVuwMNVD
+
+# mkdir -p /root/tmp/snapplicator-test.FHHhGVuwMNVD/usr/bin
+# ln /usr/bin/snapper /root/tmp/snapplicator-test.FHHhGVuwMNVD/usr/bin/
+ln: failed to create hard link '/root/tmp/snapplicator-test.FHHhGVuwMNVD/usr/bin/snapper' => '/usr/bin/snapper': Invalid cross-device link
+
+  Apparently, even /root is on a different FS - who knew? (Well, *I* /should have/…)
+
+  Let's try again, in a way that's definitely not nice, but should at least work…
+
+# mktemp -d /snapplicator-test.XXXXXXXXXXXX
+/snapplicator-test.OpNTdzQMKrmY
+
+# mkdir -p /snapplicator-test.OpNTdzQMKrmY/usr/bin
+# ln /usr/bin/snapper /snapplicator-test.OpNTdzQMKrmY/usr/bin/
+# chroot /snapplicator-test.OpNTdzQMKrmY snapper --version
+chroot: failed to run command ‘snapper’: No such file or directory
+
+# chroot /snapplicator-test.OpNTdzQMKrmY /usr/bin/snapper --version
+chroot: failed to run command ‘/usr/bin/snapper’: No such file or directory
+
+  It's there, though, so I don't get it.
+
+# tree /snapplicator-test.OpNTdzQMKrmY/
+/snapplicator-test.OpNTdzQMKrmY/
+└── usr
+    └── bin
+        └── snapper
+
+  I tried hardlinking ls into the chroot, whith the same result…
+
+# ln /usr/bin/ls /snapplicator-test.OpNTdzQMKrmY/usr/bin/
+# tree /snapplicator-test.OpNTdzQMKrmY/
+/snapplicator-test.OpNTdzQMKrmY/
+├── bin
+└── usr
+    └── bin
+        ├── ls
+        └── snapper
+
+3 directories, 2 files
+
+# chroot /snapplicator-test.OpNTdzQMKrmY ls
+chroot: failed to run command ‘ls’: No such file or directory
+# chroot /snapplicator-test.OpNTdzQMKrmY /usr/bin/ls
+chroot: failed to run command ‘/usr/bin/ls’: No such file or directory
+
+  Maybe all this hardlinking business is not such a great idea, anyway, so let's try copying…
+
+  (removed /snapplicator-test.OpNTdzQMKrmY)
+
+> mktemp -d /tmp/snapplicator-test.XXXXXXXXXXXX
+/tmp/snapplicator-test.kDGe06FzyABT
+
+> mkdir -p /tmp/snapplicator-test.kDGe06FzyABT/usr/bin
+
+> mkdir -p /tmp/snapplicator-test.kDGe06FzyABT/usr/bin
+> cp -v /usr/bin/snapper /tmp/snapplicator-test.kDGe06FzyABT/usr/bin
+'/usr/bin/snapper' -> '/tmp/snapplicator-test.kDGe06FzyABT/usr/bin/snapper'
+
+> chroot /tmp/snapplicator-test.kDGe06FzyABT snapper --version
+chroot: cannot change root directory to '/tmp/snapplicator-test.kDGe06FzyABT': Operation not permitted
+
+  Still doesn't work, because a regular user just isn't allowed to do that.
+
+  There's actually a reason for this and it's security related:
+  If a regular user were allowed to chroot, they could do so into a root with a custom sudoers file that would give them root privileges.
+
+  There is a way to do it with namespaces, though:
+
+> unshare -r chroot /tmp/snapplicator-test.kDGe06FzyABT /usr/bin/snapper --version
+chroot: failed to run command ‘/usr/bin/snapper’: No such file or directory
+
+  At least now I'm back to the same error as I had for root, but I'm a bit baffled by it, nonetheless.
+
+  Searching the web, it looks like this error may also get raised when the command binary itself exists,
+  but has missing dependencies inside the chroot (which it obviously does). I would have expected a different error,
+  but let's see if we cannot fix it…
+
+> ldd /usr/bin/snapper
+        linux-vdso.so.1 (0x00007ffd11d46000)
+        libsnapper.so.6 => /lib64/libsnapper.so.6 (0x00007fa21332e000)
+        libtinfo.so.6 => /lib64/libtinfo.so.6 (0x00007fa2132fa000)
+        libdbus-1.so.3 => /lib64/libdbus-1.so.3 (0x00007fa2132a6000)
+        libjson-c.so.5 => /lib64/libjson-c.so.5 (0x00007fa21328d000)
+        libstdc++.so.6 => /lib64/libstdc++.so.6 (0x00007fa213064000)
+        libm.so.6 => /lib64/libm.so.6 (0x00007fa212f7e000)
+        libgcc_s.so.1 => /lib64/libgcc_s.so.1 (0x00007fa212f5d000)
+        libc.so.6 => /lib64/libc.so.6 (0x00007fa212d2b000)
+        libboost_thread.so.1.79.0 => /lib64/libboost_thread.so.1.79.0 (0x00007fa212d0d000)
+        libxml2.so.2 => /lib64/libxml2.so.2 (0x00007fa212b80000)
+        libacl.so.1 => /lib64/libacl.so.1 (0x00007fa212b76000)
+        libz.so.1 => /lib64/libz.so.1 (0x00007fa212b58000)
+        libmount.so.1 => /lib64/libmount.so.1 (0x00007fa212b14000)
+        libbtrfs.so.0 => /lib64/libbtrfs.so.0 (0x00007fa212b0c000)
+        libsystemd.so.0 => /lib64/libsystemd.so.0 (0x00007fa212a39000)
+        /lib64/ld-linux-x86-64.so.2 (0x00007fa2134a4000)
+        liblzma.so.5 => /lib64/liblzma.so.5 (0x00007fa212a04000)
+        libblkid.so.1 => /lib64/libblkid.so.1 (0x00007fa2129cd000)
+        libselinux.so.1 => /lib64/libselinux.so.1 (0x00007fa21299d000)
+        libzstd.so.1 => /lib64/libzstd.so.1 (0x00007fa2128ea000)
+        liblz4.so.1 => /lib64/liblz4.so.1 (0x00007fa2128c7000)
+        libcap.so.2 => /lib64/libcap.so.2 (0x00007fa2128ba000)
+        libgcrypt.so.20 => /lib64/libgcrypt.so.20 (0x00007fa212779000)
+        libpcre2-8.so.0 => /lib64/libpcre2-8.so.0 (0x00007fa2126c6000)
+        libgpg-error.so.0 => /lib64/libgpg-error.so.0 (0x00007fa2126a0000)
+
+> mkdir /tmp/snapplicator-test.kDGe06FzyABT/lib64
+> for name in libsnapper.so.6 libtinfo.so.6 libdbus-1.so.3 libjson-c.so.5 libstdc++.so.6 libm.so.6 libgcc_s.so.1 libc.so.6 libboost_thread.so.1.79.0 libxml2.so.2 libacl.so.1 libz.so.1 libmount.so.1 libbtrfs.so.0 libsystemd.so.0 ld-linux-x86-64.so.2 liblzma.so.5 libblkid.so.1 libselinux.so.1 libzstd.so.1 liblz4.so.1 libcap.so.2 libgcrypt.so.20 libpcre2-8.so.0 libgpg-error.so.0; do cp -v /lib64/${name} /tmp/snapplicator-test.kDGe06FzyABT/lib64/; done
+'/lib64/libsnapper.so.6' -> '/tmp/snapplicator-test.kDGe06FzyABT/lib64/libsnapper.so.6'
+'/lib64/libtinfo.so.6' -> '/tmp/snapplicator-test.kDGe06FzyABT/lib64/libtinfo.so.6'
+'/lib64/libdbus-1.so.3' -> '/tmp/snapplicator-test.kDGe06FzyABT/lib64/libdbus-1.so.3'
+'/lib64/libjson-c.so.5' -> '/tmp/snapplicator-test.kDGe06FzyABT/lib64/libjson-c.so.5'
+'/lib64/libstdc++.so.6' -> '/tmp/snapplicator-test.kDGe06FzyABT/lib64/libstdc++.so.6'
+'/lib64/libm.so.6' -> '/tmp/snapplicator-test.kDGe06FzyABT/lib64/libm.so.6'
+'/lib64/libgcc_s.so.1' -> '/tmp/snapplicator-test.kDGe06FzyABT/lib64/libgcc_s.so.1'
+'/lib64/libc.so.6' -> '/tmp/snapplicator-test.kDGe06FzyABT/lib64/libc.so.6'
+'/lib64/libboost_thread.so.1.79.0' -> '/tmp/snapplicator-test.kDGe06FzyABT/lib64/libboost_thread.so.1.79.0'
+'/lib64/libxml2.so.2' -> '/tmp/snapplicator-test.kDGe06FzyABT/lib64/libxml2.so.2'
+'/lib64/libacl.so.1' -> '/tmp/snapplicator-test.kDGe06FzyABT/lib64/libacl.so.1'
+'/lib64/libz.so.1' -> '/tmp/snapplicator-test.kDGe06FzyABT/lib64/libz.so.1'
+'/lib64/libmount.so.1' -> '/tmp/snapplicator-test.kDGe06FzyABT/lib64/libmount.so.1'
+'/lib64/libbtrfs.so.0' -> '/tmp/snapplicator-test.kDGe06FzyABT/lib64/libbtrfs.so.0'
+'/lib64/libsystemd.so.0' -> '/tmp/snapplicator-test.kDGe06FzyABT/lib64/libsystemd.so.0'
+'/lib64/ld-linux-x86-64.so.2' -> '/tmp/snapplicator-test.kDGe06FzyABT/lib64/ld-linux-x86-64.so.2'
+'/lib64/liblzma.so.5' -> '/tmp/snapplicator-test.kDGe06FzyABT/lib64/liblzma.so.5'
+'/lib64/libblkid.so.1' -> '/tmp/snapplicator-test.kDGe06FzyABT/lib64/libblkid.so.1'
+'/lib64/libselinux.so.1' -> '/tmp/snapplicator-test.kDGe06FzyABT/lib64/libselinux.so.1'
+'/lib64/libzstd.so.1' -> '/tmp/snapplicator-test.kDGe06FzyABT/lib64/libzstd.so.1'
+'/lib64/liblz4.so.1' -> '/tmp/snapplicator-test.kDGe06FzyABT/lib64/liblz4.so.1'
+'/lib64/libcap.so.2' -> '/tmp/snapplicator-test.kDGe06FzyABT/lib64/libcap.so.2'
+'/lib64/libgcrypt.so.20' -> '/tmp/snapplicator-test.kDGe06FzyABT/lib64/libgcrypt.so.20'
+'/lib64/libpcre2-8.so.0' -> '/tmp/snapplicator-test.kDGe06FzyABT/lib64/libpcre2-8.so.0'
+'/lib64/libgpg-error.so.0' -> '/tmp/snapplicator-test.kDGe06FzyABT/lib64/libgpg-error.so.0'
+
+> unshare -r chroot /tmp/snapplicator-test.kDGe06FzyABT /usr/bin/snapper --version
+Failed to set locale.
+snapper 0.10.2
+flags btrfs,lvm,no-ext4,xattrs,rollback,btrfs-quota,no-selinux
+
+  So this way, I could create a chroot, inside of which to execute snapper. It's a bit of a pain, though…
+
+> snapper list-configs
+Konfiguration | Subvolumen
+--------------+-----------
+
+> unshare -r chroot /tmp/snapplicator-test.kDGe06FzyABT /usr/bin/snapper list-configs
+Failed to set locale.
+Failure (dbus fatal exception).
+
+  Then I found the '--no-dbus' option and got a step further…
+
+> unshare -r chroot /tmp/snapplicator-test.kDGe06FzyABT /usr/bin/snapper --no-dbus list-configs
+Failed to set locale.
+Listing configs failed (reading sysconfig-file failed).
+
+> mkdir -p /tmp/snapplicator-test.kDGe06FzyABT/etc/snapper/configs
+> unshare -r chroot /tmp/snapplicator-test.kDGe06FzyABT /usr/bin/snapper --no-dbus list-configs
+Failed to set locale.
+Listing configs failed (reading sysconfig-file failed).
+
+  Still, though, even if I get `snapper` to work in the unshared chroot, I might still need root access
+  to create btrfs subvolumes for testing... maybe only a full container would work, but at the very least
+  it would be a bunch more work to get this to work...
+
+  More than it's worth, IMO, so I left the idea and will do manual testing, for now.
+*** System preparation for further development on another machine
+> mkdir Projekte/snapplicator
+> sudo btrfs subvolume create Projekte/snapplicator/original
+Create subvolume 'Projekte/snapplicator/original'
+
+> sudo btrfs subvolume create Projekte/snapplicator/backup
+Create subvolume 'Projekte/snapplicator/backup'
+
+> sudo chown gabe:users Projekte/snapplicator/original
+> sudo chown gabe:users Projekte/snapplicator/backup
+
+> sudo snapper -c snapplicator create-config Projekte/snapplicator/original
+> sudo snapper list-configs
+Konfiguration | Subvolumen
+--------------+------------------------------------------
+snapplicator  | /home/gabe/Projekte/snapplicator/original
+
+> sudo snapper -c snapplicator get-config
+Schlüssel              | Wert
+-----------------------+------------------------------------------
+ALLOW_GROUPS           |
+ALLOW_USERS            |
+BACKGROUND_COMPARISON  | yes
+EMPTY_PRE_POST_CLEANUP | yes
+EMPTY_PRE_POST_MIN_AGE | 1800
+FREE_LIMIT             | 0.2
+FSTYPE                 | btrfs
+NUMBER_CLEANUP         | yes
+NUMBER_LIMIT           | 50
+NUMBER_LIMIT_IMPORTANT | 10
+NUMBER_MIN_AGE         | 1800
+QGROUP                 |
+SPACE_LIMIT            | 0.5
+SUBVOLUME              | /home/gabe/Projekte/snapplicator/original
+SYNC_ACL               | no
+TIMELINE_CLEANUP       | yes
+TIMELINE_CREATE        | yes
+TIMELINE_LIMIT_DAILY   | 10
+TIMELINE_LIMIT_HOURLY  | 10
+TIMELINE_LIMIT_MONTHLY | 10
+TIMELINE_LIMIT_WEEKLY  | 0
+TIMELINE_LIMIT_YEARLY  | 10
+TIMELINE_MIN_AGE       | 1800
+
+> sudo snapper -c snapplicator list
+ # | Typ    | Vorher # | Datum | Benutzer | Bereinigen | Beschreibung | Benutzerdaten
+---+--------+----------+-------+----------+------------+--------------+--------------
+0  | single |          |       | root     |            | current      |
+
+> sudo snapper -c snapplicator create
+> sudo snapper -c snapplicator list
+ # | Typ    | Vorher # | Datum                        | Benutzer | Bereinigen | Beschreibung | Benutzerdaten
+---+--------+----------+------------------------------+----------+------------+--------------+--------------
+0  | single |          |                              | root     |            | current      |
+1  | single |          | Di 28 Jun 2022 10:21:12 CEST | root     |            |              |
+
+  So far, so good. Now let's create some "data"…
+
+> touch Projekte/snapplicator/original/bollocks
+> sudo snapper -c snapplicator create
+> echo "nonsense" > Projekte/snapplicator/original/bollocks
+> sudo snapper -c snapplicator create
+> echo "bollocks" > Projekte/snapplicator/original/bollocks
+> sudo snapper -c snapplicator create
+> sudo snapper -c snapplicator list
+ # | Typ    | Vorher # | Datum                        | Benutzer | Bereinigen | Beschreibung | Benutzerdaten
+---+--------+----------+------------------------------+----------+------------+--------------+--------------
+0  | single |          |                              | root     |            | current      |
+1  | single |          | Di 28 Jun 2022 10:21:12 CEST | root     |            |              |
+2  | single |          | Di 28 Jun 2022 10:28:00 CEST | root     |            |              |
+3  | single |          | Di 28 Jun 2022 10:28:17 CEST | root     |            |              |
+4  | single |          | Di 28 Jun 2022 10:30:21 CEST | root     |            |              |
+
+  Now let's do a few comparisons, just to see that things are working correctly here…
+
+> sudo snapper -c snapplicator diff 0..4
+(no output)
+
+> rm Projekte/snapplicator/original/bollocks
+> sudo snapper -c snapplicator diff 0..4
+--- /home/gabe/Projekte/snapplicator/original/bollocks  1970-01-01 01:00:00.000000000 +0100
++++ /home/gabe/Projekte/snapplicator/original/.snapshots/4/snapshot/bollocks    2022-06-28 10:28:30.809851392 +0200
+@@ -0,0 +1 @@
++bollocks
+
+> sudo snapper -c snapplicator diff 4..0
+--- /home/gabe/Projekte/snapplicator/original/.snapshots/4/snapshot/bollocks    2022-06-28 10:28:30.809851392 +0200
++++ /home/gabe/Projekte/snapplicator/original/bollocks  1970-01-01 01:00:00.000000000 +0100
+@@ -1 +0,0 @@
+-bollocks
+
+
+  This just confirms that snapshot 0 really always represents the current state of the subvolume,
+  as hinted at by the description "current".
+
+  This means that in "diff" comparisons, it makes more sense to specify 0 *last*, if one wants to compare some earlier
+  snapshot with the current state.
+
+> sudo snapper -c snapplicator diff 1..2
+(no output)
+
+  Creation of empty files does not yield a diff. For that we have…
+
+> sudo snapper -c snapplicator status 1..2
++..... /home/gabe/Projekte/snapplicator/original/bollocks
+
+  The snapper man page lists what the status bits mean. A + in the first place means creation, a c content change etc.
+
+> sudo snapper -c snapplicator diff 2..3
+--- /home/gabe/Projekte/snapplicator/original/.snapshots/2/snapshot/bollocks    2022-06-28 10:27:53.157706713 +0200
++++ /home/gabe/Projekte/snapplicator/original/.snapshots/3/snapshot/bollocks    2022-06-28 10:28:14.665789362 +0200
+@@ -0,0 +1 @@
++nonsense
+
+> sudo snapper -c snapplicator status 2..3
+c..... /home/gabe/Projekte/snapplicator/original/bollocks
+
+  Here, the diff is non-empty and so is the status, because the file contents have changed.
+
+> sudo snapper -c snapplicator diff 3..4
+--- /home/gabe/Projekte/snapplicator/original/.snapshots/3/snapshot/bollocks    2022-06-28 10:28:14.665789362 +0200
++++ /home/gabe/Projekte/snapplicator/original/.snapshots/4/snapshot/bollocks    2022-06-28 10:28:30.809851392 +0200
+@@ -1 +1 @@
+-nonsense
++bollocks
+
+> sudo snapper -c snapplicator status 3..4
+c..... /home/gabe/Projekte/snapplicator/original/bollocks
+
+  Same. Now let's see about several files were some will remain unchanged…
+
+> echo foo > Projekte/snapplicator/original/foo
+> sudo snapper -c snapplicator create
+> echo bar > Projekte/snapplicator/original/bar
+> sudo snapper -c snapplicator create
+> echo baz > Projekte/snapplicator/original/baz
+> sudo snapper -c snapplicator create
+> mv Projekte/snapplicator/original/foo Projekte/snapplicator/original/foobar
+> sudo snapper -c snapplicator create
+> echo foobar > Projekte/snapplicator/original/foobar
+> sudo snapper -c snapplicator create
+> rm Projekte/snapplicator/original/bar
+> sudo snapper -c snapplicator create
+> sudo snapper -c snapplicator list
+  # | Typ    | Vorher # | Datum                        | Benutzer | Bereinigen | Beschreibung | Benutzerdaten
+----+--------+----------+------------------------------+----------+------------+--------------+--------------
+ 0  | single |          |                              | root     |            | current      |
+ 1  | single |          | Di 28 Jun 2022 10:21:12 CEST | root     |            |              |
+ 2  | single |          | Di 28 Jun 2022 10:28:00 CEST | root     |            |              |
+ 3  | single |          | Di 28 Jun 2022 10:28:17 CEST | root     |            |              |
+ 4  | single |          | Di 28 Jun 2022 10:30:21 CEST | root     |            |              |
+ 5  | single |          | Di 28 Jun 2022 10:58:47 CEST | root     |            |              |
+ 6  | single |          | Di 28 Jun 2022 10:58:57 CEST | root     |            |              |
+ 7  | single |          | Di 28 Jun 2022 10:59:12 CEST | root     |            |              |
+ 8  | single |          | Di 28 Jun 2022 10:59:43 CEST | root     |            |              |
+ 9  | single |          | Di 28 Jun 2022 10:59:58 CEST | root     |            |              |
+10  | single |          | Di 28 Jun 2022 11:00:00 CEST | root     | timeline   | timeline     |
+11  | single |          | Di 28 Jun 2022 11:00:13 CEST | root     |            |              |
+
+  Oh… a regular timeline snapshot slipped in here! Doesn't matter for our testing, but good to know for when we look
+  at the results…
+
+> sudo snapper -c snapplicator diff 4..5
+--- /home/gabe/Projekte/snapplicator/original/.snapshots/4/snapshot/bollocks    2022-06-28 10:28:30.809851392 +0200
++++ /home/gabe/Projekte/snapplicator/original/.snapshots/5/snapshot/bollocks    1970-01-01 01:00:00.000000000 +0100
+@@ -1 +0,0 @@
+-bollocks
+--- /home/gabe/Projekte/snapplicator/original/.snapshots/4/snapshot/foo 1970-01-01 01:00:00.000000000 +0100
++++ /home/gabe/Projekte/snapplicator/original/.snapshots/5/snapshot/foo 2022-06-28 10:58:39.664041374 +0200
+@@ -0,0 +1 @@
++foo
+
+> sudo snapper -c snapplicator status 4..5
+-..... /home/gabe/Projekte/snapplicator/original/bollocks
++..... /home/gabe/Projekte/snapplicator/original/foo
+
+  OK, so the diff has two parts and the status output two lines, because the 'bollocks' file had been removed in
+  the current "snapshot" (no. 0), but that change was not actually snapshotted yet, and then we created a new file.
+
+> sudo snapper -c snapplicator diff 5..6
+--- /home/gabe/Projekte/snapplicator/original/.snapshots/5/snapshot/bar 1970-01-01 01:00:00.000000000 +0100
++++ /home/gabe/Projekte/snapplicator/original/.snapshots/6/snapshot/bar 2022-06-28 10:58:55.680133393 +0200
+@@ -0,0 +1 @@
++bar
+
+> sudo snapper -c snapplicator status 5..6
++..... /home/gabe/Projekte/snapplicator/original/bar
+
+  Only a single new file created. Note how the file 'foo' from last snapshot is missing from this output, as it
+  remains unchanged.
+
+> sudo snapper -c snapplicator diff 6..7
+--- /home/gabe/Projekte/snapplicator/original/.snapshots/6/snapshot/baz 1970-01-01 01:00:00.000000000 +0100
++++ /home/gabe/Projekte/snapplicator/original/.snapshots/7/snapshot/baz 2022-06-28 10:59:03.736179679 +0200
+@@ -0,0 +1 @@
++baz
+
+> sudo snapper -c snapplicator status 6..7
++..... /home/gabe/Projekte/snapplicator/original/baz
+
+  Yet another file creation. The two existing files are unchanged and thus not listed here.
+
+> sudo snapper -c snapplicator diff 7..8
+--- /home/gabe/Projekte/snapplicator/original/.snapshots/7/snapshot/foo 2022-06-28 10:58:39.664041374 +0200
++++ /home/gabe/Projekte/snapplicator/original/.snapshots/8/snapshot/foo 1970-01-01 01:00:00.000000000 +0100
+@@ -1 +0,0 @@
+-foo
+--- /home/gabe/Projekte/snapplicator/original/.snapshots/7/snapshot/foobar      1970-01-01 01:00:00.000000000 +0100
++++ /home/gabe/Projekte/snapplicator/original/.snapshots/8/snapshot/foobar      2022-06-28 10:58:39.664041374 +0200
+@@ -0,0 +1 @@
++foo
+
+> sudo snapper -c snapplicator status 7..8
+-..... /home/gabe/Projekte/snapplicator/original/foo
++..... /home/gabe/Projekte/snapplicator/original/foobar
+
+  This is how a rename/move shows up.
+
+> sudo snapper -c snapplicator diff 8..9
+--- /home/gabe/Projekte/snapplicator/original/.snapshots/8/snapshot/foobar      2022-06-28 10:58:39.664041374 +0200
++++ /home/gabe/Projekte/snapplicator/original/.snapshots/9/snapshot/foobar      2022-06-28 10:59:55.192464973 +0200
+@@ -1 +1 @@
+-foo
++foobar
+
+> sudo snapper -c snapplicator status 8..9
+c..... /home/gabe/Projekte/snapplicator/original/foobar
+
+  Content change (unchanged files not listed, of course).
+
+> sudo snapper -c snapplicator diff 9..10
+> sudo snapper -c snapplicator status 9..10
+
+  No change in the timeline snapshot (no surprise).
+
+> sudo snapper -c snapplicator diff 10..11
+--- /home/gabe/Projekte/snapplicator/original/.snapshots/10/snapshot/bar        2022-06-28 10:58:55.680133393 +0200
++++ /home/gabe/Projekte/snapplicator/original/.snapshots/11/snapshot/bar        1970-01-01 01:00:00.000000000 +0100
+@@ -1 +0,0 @@
+-bar
+
+> sudo snapper -c snapplicator status 10..11
+-..... /home/gabe/Projekte/snapplicator/original/bar
+
+  And now the 'bar' file is gone.
+
+  I think that's enough faffing about, time to break out `snapplicator`…
+
+  I put snapplicator into a private repo on GitHub and cloned it onto the workstation.
+  Then I created the /etc/snapplicator dir and copied examples/config.yml there, which
+  I then edited to look like this:
+  ```
+  config:
+    version: 1
+  duplication_pairs:
+    - source: /home/gabe/Projekte/snapplicator/original
+      target: /home/gabe/Projekte/snapplicator/backup
+  ```
+  … which should do the trick, I think.
+
+> python3 snapplicator.py
+Traceback (most recent call last):
+  File "/home/gabe/git/github/snapplicator/snapplicator.py", line 398, in <module>
+    for duplication_pair in get_duplication_pairs():
+  File "/home/gabe/git/github/snapplicator/snapplicator.py", line 34, in get_duplication_pairs
+    config = yaml.load(config_file.read())
+TypeError: load() missing 1 required positional argument: 'Loader'
+
+  Python yaml's `load` now requires a loader attribute, but I was able to fix that using `safe_load` instead,
+  which is the better and safer choice, anyway.
+
+> python3 snapplicator.py
+Traceback (most recent call last):
+  File "/home/gabe/git/github/snapplicator/snapplicator.py", line 399, in <module>
+    duplicate(duplication_pair.source, duplication_pair.target)
+  File "/home/gabe/git/github/snapplicator/snapplicator.py", line 373, in duplicate
+    source = SnapshotDirectory(source_dir)
+  File "/home/gabe/git/github/snapplicator/snapplicator.py", line 264, in __init__
+    super().__init__(path)
+  File "/home/gabe/git/github/snapplicator/snapplicator.py", line 86, in __init__
+    path = self._validate_path(path)
+  File "/home/gabe/git/github/snapplicator/snapplicator.py", line 100, in _validate_path
+    self.error('Path "{}" is not readable!'.format(path))
+  File "/home/gabe/git/github/snapplicator/snapplicator.py", line 111, in error
+    raise self.error_class(message)
+__main__.SnapshotDirectoryError: Path "/home/gabe/Projekte/snapplicator/original/.snapshots" is not readable!
+
+  Yeah, that'll happen... because snapper has to be run as root, the snapshots directory will then also only
+  be readable by root.
+
+  So I'll just have to run `snapplicator` as root, too.
+
+> sudo python3 snapplicator.py -v
+Traceback (most recent call last):
+  File "/home/gabe/git/github/snapplicator/snapplicator.py", line 399, in <module>
+    duplicate(duplication_pair.source, duplication_pair.target)
+  File "/home/gabe/git/github/snapplicator/snapplicator.py", line 374, in duplicate
+    target = SnapshotDirectory(target_dir)
+  File "/home/gabe/git/github/snapplicator/snapplicator.py", line 264, in __init__
+    super().__init__(path)
+  File "/home/gabe/git/github/snapplicator/snapplicator.py", line 86, in __init__
+    path = self._validate_path(path)
+  File "/home/gabe/git/github/snapplicator/snapplicator.py", line 98, in _validate_path
+    self.error('Path "{}" is not a directory!'.format(path))
+  File "/home/gabe/git/github/snapplicator/snapplicator.py", line 111, in error
+    raise self.error_class(message)
+__main__.SnapshotDirectoryError: Path "/home/gabe/Projekte/snapplicator/backup/.snapshots" is not a directory!
+
+  OK, this is a bug (but one I suspected might exist). Snapplicator should be able to intialise the target.
+
+  Fixed it by introducing a new kwarg `create_if_missing`, which allows PathWrapper to create missing directories
+  and SnapshotDirectory to create missing btrfs subvolumes.
+
+  Had to fix a bunch of other stuff before the script would first run through successfully, but then…
+
+> sudo python3 snapplicator.py -v
+Missing from target: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+Superfluous at target: nothing
+First missing snapshot is number 2 (predecessor: 1)
+
+  … and after that…
+
+> sudo python3 snapplicator.py -v
+Missing from target: nothing
+Superfluous at target: nothing
+
+  So yeah, that seems to have worked (even with the new timeline snapshots that have cropped up in the meantime).
+
+  Now to test snapshot deletion. Let's say I've grown up a bit and become thoroughly embarassed about the contents of
+  my first (long gone from current) test file and I want to remove that from my snapshot history…
+
+  The file was introduced (but empty) in snapshot 2, but the offending content was written there in snapshot 4 and then
+  the file got removed in snapshot 5, so if I only remove snapshot 4, I'm good.
+
+> sudo snapper -c snapplicator delete 4
+> sudo snapper -c snapplicator list
+  # | Typ    | Vorher # | Datum                        | Benutzer | Bereinigen | Beschreibung | Benutzerdaten
+----+--------+----------+------------------------------+----------+------------+--------------+--------------
+ 0  | single |          |                              | root     |            | current      |
+ 1  | single |          | Di 28 Jun 2022 10:21:12 CEST | root     |            |              |
+ 2  | single |          | Di 28 Jun 2022 10:28:00 CEST | root     |            |              |
+ 3  | single |          | Di 28 Jun 2022 10:28:17 CEST | root     |            |              |
+ 5  | single |          | Di 28 Jun 2022 10:58:47 CEST | root     |            |              |
+ 6  | single |          | Di 28 Jun 2022 10:58:57 CEST | root     |            |              |
+ 7  | single |          | Di 28 Jun 2022 10:59:12 CEST | root     |            |              |
+ 8  | single |          | Di 28 Jun 2022 10:59:43 CEST | root     |            |              |
+ 9  | single |          | Di 28 Jun 2022 10:59:58 CEST | root     |            |              |
+10  | single |          | Di 28 Jun 2022 11:00:00 CEST | root     | timeline   | timeline     |
+11  | single |          | Di 28 Jun 2022 11:00:13 CEST | root     |            |              |
+12  | single |          | Di 28 Jun 2022 12:00:23 CEST | root     | timeline   | timeline     |
+13  | single |          | Di 28 Jun 2022 13:00:01 CEST | root     | timeline   | timeline     |
+14  | single |          | Di 28 Jun 2022 14:00:01 CEST | root     | timeline   | timeline     |
+15  | single |          | Di 28 Jun 2022 15:00:01 CEST | root     | timeline   | timeline     |
+16  | single |          | Di 28 Jun 2022 16:00:01 CEST | root     | timeline   | timeline     |
+17  | single |          | Di 28 Jun 2022 17:00:01 CEST | root     | timeline   | timeline     |
+> sudo cat ~/Projekte/snapplicator/original/.snapshots/4/snapshot/bollocks
+cat: /home/gabe/Projekte/snapplicator/original/.snapshots/4/snapshot/bollocks: No such file or directory
+
+  But uh oh, there is still a backup of this snapshot in the snapplicator target, so we need to run the script
+  again to have that removed, as well.
+
+> sudo python3 snapplicator.py -v
+Missing from target: nothing
+Superfluous at target: [4]
+
+> sudo ls ~/Projekte/snapplicator/backup/.snapshots/
+1  10  11  12  13  14  15  16  17  2  3  5  6  7  8  9
+
+  So that worked, but now let's pretend I relaise that the test file's /name/ is the same as the offensive content.
+  Now I need to purge history of all the snapshots it was part of…
+
+> sudo snapper -c snapplicator remove 2-5
+> sudo find ~/Projekte/snapplicator/original -name bollocks
+(no output)
+
+> sudo python3 snapplicator.py -v
+Missing from target: nothing
+Superfluous at target: [2, 3, 5]
+
+> sudo find ~/Projekte/snapplicator/backup -name bollocks
+(no output)
+
+  So it really looks like I got the script to work correctly on another machine! :-)
+*** TODO Make config file location configurable
 *** TODO Implement systemd service to run script
 *** …
 *** TODO Put on GitHub/Gitlab
