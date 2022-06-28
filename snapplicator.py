@@ -13,6 +13,10 @@ VERBOSE = False
 
 def get_arguments():
     parser = ArgumentParser()
+    parser.add_argument('-c', '--config',
+                        action='store',
+                        default='/etc/snapplicator/config.yml',
+                        help='use this as config file')
     parser.add_argument('-v', '--verbose',
                         action='store_true',
                         help='explain what is being done')
@@ -26,9 +30,7 @@ class ConfigError(Exception):
     pass
 
 
-def get_duplication_pairs():
-    # TODO: Make config file path configurable
-    config_file_path = '/etc/snapplicator/config.yml'
+def get_duplication_pairs(config_file_path):
     try:
         with open(config_file_path) as config_file:
             config = yaml.safe_load(config_file.read())
@@ -62,8 +64,7 @@ def output(message):
         print(message)
 
 
-def process_arguments():
-    arguments = get_arguments()
+def process_arguments(arguments):
     global VERBOSE
     VERBOSE = arguments.verbose
 
@@ -420,10 +421,11 @@ def duplicate(source_dir, target_dir):
 
 
 if __name__ == '__main__':
-    process_arguments()
+    arguments = get_arguments()
+    process_arguments(arguments)
     # TODO: Make scripts dir configurable
     run_scripts_in('/etc/snapplicator/prerun-hooks.d')
-    for duplication_pair in get_duplication_pairs():
+    for duplication_pair in get_duplication_pairs(arguments.config):
         duplicate(duplication_pair.source, duplication_pair.target)
     # TODO: Make scripts dir configurable
     run_scripts_in('/etc/snapplicator/postrun-hooks.d')

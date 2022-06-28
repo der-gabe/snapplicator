@@ -656,7 +656,7 @@ Superfluous at target: [2, 3, 5]
 (no output)
 
   So it really looks like I got the script to work correctly on another machine! :-)
-*** TODO Make config file location configurable
+*** DONE Make config file location configurable
 *** TODO Implement systemd service to run script
 *** …
 *** TODO Put on GitHub/Gitlab
