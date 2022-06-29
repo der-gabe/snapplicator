@@ -1,0 +1,6 @@
+[Unit]
+Description=Duplication of Snapper Snapshots
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /path/to/snapplicator/snapplicator.py

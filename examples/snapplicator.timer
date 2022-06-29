@@ -1,0 +1,9 @@
+[Unit]
+Description=Duplication of Snapper Snapshots
+
+[Timer]
+OnBootSec=20m
+OnUnitActiveSec=20m
+
+[Install]
+WantedBy=timers.target
