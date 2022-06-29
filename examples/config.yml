@@ -2,4 +2,6 @@ config:
     version: 1
 duplication_pairs:
   - source: /
-    target: /mnt/backups/qubes4/root
+    target: /path/to/backup/for/root
+  - source: /home
+    target: /path/to/backup/for/home
