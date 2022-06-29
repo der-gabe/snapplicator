@@ -45,8 +45,13 @@ At subvol /.snapshots/108/snapshot
 At snapshot snapshot
 
 (I felt that I didn't need the verbose flag in that example.)
-** TODO (optional) Experiment some more
+** DONE (optional) Experiment some more
 What happens when the parent is deleted? … on either side?
+
+It's not a problem, the snapshot stays unchanged. The parent only seems to be of interest for the actual send/receive part, to minimize
+the amount of data transferred I presume, and not after that.
+
+For more experimentation cf. the system preparation for development on a new machine below.
 ** TODO Write basic snapshot replication script
 *** Requirements
 **** Must find new snapshots, auto-determine the parent (numeric predecessor), set up target directory and send/receive it correctly
@@ -658,6 +663,153 @@ Superfluous at target: [2, 3, 5]
   So it really looks like I got the script to work correctly on another machine! :-)
 *** DONE Make config file location configurable
 *** TODO Implement systemd service to run script
-*** …
+**** Wrote `snapplicator.timer`
+```
+[Unit]
+Description=Duplication of Snapper Snapshots
+
+[Timer]
+OnBootSec=20m
+OnUnitActiveSec=20m
+
+[Install]
+WantedBy=timers.target
+```
+**** Wrote `snapplicator.service`
+```
+[Unit]
+Description=Duplication of Snapper Snapshots
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/gabe/git/github/snapplicator/snapplicator.py -v
+```
+Obviously, this is not what the final ExecStart line will be…
+**** Tested them by installing on dev machine
+> sudo cp -v examples/snapplicator.*[^~] /usr/lib/systemd/system
+'examples/snapplicator.service' -> '/usr/lib/systemd/system/snapplicator.service'
+'examples/snapplicator.timer' -> '/usr/lib/systemd/system/snapplicator.timer'
+
+> systemctl status snapplicator.service
+○ snapplicator.service - Duplication of Snapper Snapshots
+     Loaded: loaded (/usr/lib/systemd/system/snapplicator.service; static)
+     Active: inactive (dead)
+
+> systemctl status snapplicator.timer
+○ snapplicator.timer - Duplication of Snapper Snapshots
+     Loaded: loaded (/usr/lib/systemd/system/snapplicator.timer; disabled; vendor preset: disabled)
+     Active: inactive (dead)
+    Trigger: n/a
+   Triggers: ● snapplicator.service
+
+
+   So systemd found them w/o reloading, but obviously they're disabled and dead. Let's change that…
+
+
+> sudo systemctl enable snapplicator.timer
+Created symlink /etc/systemd/system/timers.target.wants/snapplicator.timer → /usr/lib/systemd/system/snapplicator.timer.
+
+> systemctl status snapplicator.timer
+○ snapplicator.timer - Duplication of Snapper Snapshots
+     Loaded: loaded (/usr/lib/systemd/system/snapplicator.timer; enabled; vendor preset: disabled)
+     Active: inactive (dead)
+    Trigger: n/a
+   Triggers: ● snapplicator.service
+
+
+   Enabling alone isn't enough…
+
+
+> sudo systemctl start snapplicator.timer
+> systemctl status snapplicator.timer
+● snapplicator.timer - Duplication of Snapper Snapshots
+     Loaded: loaded (/usr/lib/systemd/system/snapplicator.timer; enabled; vendor preset: disabled)
+     Active: active (waiting) since Wed 2022-06-29 09:55:42 CEST; 3s ago
+      Until: Wed 2022-06-29 09:55:42 CEST; 3s ago
+    Trigger: Wed 2022-06-29 10:15:42 CEST; 19min left
+   Triggers: ● snapplicator.service
+
+> systemctl status snapplicator.service
+○ snapplicator.service - Duplication of Snapper Snapshots
+     Loaded: loaded (/usr/lib/systemd/system/snapplicator.service; static)
+     Active: inactive (dead) since Wed 2022-06-29 09:55:43 CEST; 11s ago
+TriggeredBy: ● snapplicator.timer
+    Process: 30436 ExecStart=/usr/bin/python3 /home/gabe/git/github/snapplicator/snapplicator.py -v (code=exited, status=0/SUCCESS)
+   Main PID: 30436 (code=exited, status=0/SUCCESS)
+        CPU: 128ms
+
+
+  The service seems to have run. I added the '-v' option to let it produce some output, but this is not reflected here.
+
+  I'll see if I can find it, but I can also show the service's effectiveness by just comparing the original and backup snapshot dirs.
+
+> sudo ls ~/Projekte/snapplicator/original/.snapshots/
+1  10  11  12  13  14  15  16  17  18  19  20  21  6  7  8  9
+
+> sudo ls ~/Projekte/snapplicator/backup/.snapshots/
+1  10  11  12  13  14  15  16  17  18  19  20  6  7  8  9
+
+  Whoops, there's one missing!
+
+  But never fear…
+
+> sudo snapper -c snapplicator list
+  # | Typ    | Vorher # | Datum                        | Benutzer | Bereinigen | Beschreibung | Benutzerdaten
+----+--------+----------+------------------------------+----------+------------+--------------+--------------
+ 0  | single |          |                              | root     |            | current      |
+ …
+17  | single |          | Di 28 Jun 2022 17:00:01 CEST | root     | timeline   | timeline     |
+18  | single |          | Di 28 Jun 2022 18:00:01 CEST | root     | timeline   | timeline     |
+19  | single |          | Di 28 Jun 2022 19:05:31 CEST | root     | timeline   | timeline     |
+20  | single |          | Mi 29 Jun 2022 09:02:36 CEST | root     | timeline   | timeline     |
+21  | single |          | Mi 29 Jun 2022 10:00:25 CEST | root     | timeline   | timeline     |
+
+  Turns out no. 21 is a timeline snapshot, created at 10:00, but the service run was a bit earlier, at 09:55 (cf. above)
+  so that all lines up and makes sense.
+
+  Notably, snapshot 21 is the *only* one that's missing, but no. 20 was also created this morning and I did not run snapplicator
+  manually today, so it definitely worked.
+
+  I'll see again later, when the service runs again.
+
+  In the meantime, here's the logged output:
+
+> sudo journalctl -u snapplicator.service
+Jun 29 09:55:42 saturnus systemd[1]: Starting Duplication of Snapper Snapshots...
+Jun 29 09:55:43 saturnus python3[30436]: Missing from target: [20]
+Jun 29 09:55:43 saturnus python3[30436]: Superfluous at target: nothing
+Jun 29 09:55:43 saturnus python3[30436]: First missing snapshot is number 20 (predecessor: 19)
+Jun 29 09:55:43 saturnus systemd[1]: snapplicator.service: Deactivated successfully.
+Jun 29 09:55:43 saturnus systemd[1]: Finished Duplication of Snapper Snapshots.
+
+  So that looks good, too.
+
+> systemctl status snapplicator.timer snapplicator.service
+● snapplicator.timer - Duplication of Snapper Snapshots
+     Loaded: loaded (/usr/lib/systemd/system/snapplicator.timer; enabled; vendor preset: disabled)
+     Active: active (waiting) since Wed 2022-06-29 09:55:42 CEST; 23min ago
+      Until: Wed 2022-06-29 09:55:42 CEST; 23min ago
+    Trigger: Wed 2022-06-29 10:35:57 CEST; 17min left
+   Triggers: ● snapplicator.service
+
+○ snapplicator.service - Duplication of Snapper Snapshots
+     Loaded: loaded (/usr/lib/systemd/system/snapplicator.service; static)
+     Active: inactive (dead) since Wed 2022-06-29 10:15:58 CEST; 2min 47s ago
+TriggeredBy: ● snapplicator.timer
+    Process: 31134 ExecStart=/usr/bin/python3 /home/gabe/git/github/snapplicator/snapplicator.py -v (code=exited, status=0/SUCCESS)
+   Main PID: 31134 (code=exited, status=0/SUCCESS)
+        CPU: 117ms
+> sudo journalctl -u snapplicator.service
+[…]
+Jun 29 10:15:57 saturnus systemd[1]: Starting Duplication of Snapper Snapshots...
+Jun 29 10:15:58 saturnus python3[31134]: Missing from target: [21]
+Jun 29 10:15:58 saturnus python3[31134]: Superfluous at target: nothing
+Jun 29 10:15:58 saturnus python3[31134]: First missing snapshot is number 21 (predecessor: 20)
+Jun 29 10:15:58 saturnus systemd[1]: snapplicator.service: Deactivated successfully.
+Jun 29 10:15:58 saturnus systemd[1]: Finished Duplication of Snapper Snapshots.
+
+  It ran again and it worked again! Time to finish up...
 *** TODO Put on GitHub/Gitlab
+**** DONE Created private repo and uploaded to it
+**** TODO Add licence
 *** TODO Publish package on OBS
