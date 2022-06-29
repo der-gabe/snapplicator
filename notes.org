@@ -810,6 +810,8 @@ Jun 29 10:15:58 saturnus systemd[1]: Finished Duplication of Snapper Snapshots.
 
   It ran again and it worked again! Time to finish up...
 *** TODO Put on GitHub/Gitlab
-**** DONE Created private repo and uploaded to it
+**** DONE Created private repo on GitHub and uploaded to it
+**** DONE Added README
 **** TODO Add licence
+**** TODO Publish
 *** TODO Publish package on OBS
