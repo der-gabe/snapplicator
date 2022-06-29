@@ -30,7 +30,7 @@ target for each snapper snapshot source you wish to duplicate. A target
 subvolume may contain other data, but it must not be configured to hold snapper
 snapshots of itself, nor must the same target ever be used for more than one
 source. Snapplicator will create its own `.snapshots` subvolume within the
-target subvolume, but it cannot set up the target itself for you.
+target subvolume.
 
 Let's assume you have configured `snapper` to make regular snapshots of your
 root directory at `/` and you have created a separate btrfs subvolume at
@@ -56,7 +56,7 @@ duplication_pairs:
 ```
 
 As you can see from the example, you can add more such stanzas in this file to
-let `snapplicator` duplicate serveral snapshot sources at once.
+let `snapplicator` duplicate several snapshot sources at once.
 
 Now run:
 
@@ -92,7 +92,7 @@ option anymore.
 
 Simply create a directory `/etc/snapplicator` and copy your `config.yml` there
 (keeping the name). Snapplicator expects and will look for a config file at
-`/etc/snapplicator/config.yml` in the absence of the `-c` option and will us it
+`/etc/snapplicator/config.yml` in the absence of the `-c` option and will use it
 if found.
 
 ## Automation
@@ -118,7 +118,7 @@ allow it to be run in the background at regular intervals by `systemd`.
 
 Simply copy these to a location where `systemd` will find them, e.g.
 `/etc/systemd/system` or `/usr/lib/systemd/system` and adjust the path to the
-`snapplicator.py` script file in the ÈxecStart` line in `snapplicator.service`.
+`snapplicator.py` script file in the `ExecStart` line in `snapplicator.service`.
 
 For our example, we'll assume the latter.
 
