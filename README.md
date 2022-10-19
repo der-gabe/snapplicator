@@ -19,7 +19,7 @@ This is by design, to keep your target subvolumes from ballooning in size.
 ## Dependencies
 
 Please note that you need Python 3, `btrfs` and `snapper` to use this script.
-It has not other dependencies.
+It has no other dependencies.
 
 ## Getting started
 
